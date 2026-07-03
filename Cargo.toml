@@ -1,0 +1,14 @@
+[package]
+name = "teddy"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# spec §3: minimal rustix-style Unix syscall access is the one allowed category
+rustix = { version = "1", default-features = false, features = ["termios", "event", "stdio", "std"] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
