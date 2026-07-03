@@ -112,16 +112,33 @@ fn main() -> ExitCode {
 /// head; a windowed measure replaces this if it ever matters.
 const LINE_CAP: usize = 256 * 1024;
 
+#[derive(PartialEq)]
+enum Mode {
+    Edit,
+    ConfirmQuit,
+}
+
+// undo grouping kinds
+const KIND_NONE: u8 = 0;
+const KIND_INSERT: u8 = 1;
+const KIND_BACKSPACE: u8 = 2;
+const KIND_DELETE: u8 = 3;
+
 fn run(buffers: &mut [Buffer]) -> std::io::Result<()> {
     let active = 0usize;
     let (mut cols, mut rows) = term::size();
     let mut dirty = true;
+    let mut mode = Mode::Edit;
+    let mut status_msg = String::new();
+    let mut pending_force_save = false;
+    let mut last_edit_kind = KIND_NONE;
 
     let mut frame = FrameBuf::new();
     let mut parser = Parser::new();
     let mut keys: Vec<Key> = Vec::with_capacity(16);
     let mut read_buf = [0u8; 1024];
     let mut row_store: Vec<Vec<u8>> = Vec::new();
+    let mut row_sel: Vec<Option<(usize, usize)>> = Vec::new();
     let mut status_left = String::new();
     let mut status_right = String::new();
     let mut scratch = Vec::new();
@@ -149,26 +166,135 @@ fn run(buffers: &mut [Buffer]) -> std::io::Result<()> {
         }
 
         let editor_rows = rows.saturating_sub(2).max(1) as u64;
-        let buf = &mut buffers[active];
         for k in keys.drain(..) {
-            match k {
-                Key::Ctrl(b'Q') => return Ok(()),
-                _ => {
-                    if apply_movement(buf, k, editor_rows, &mut scratch) {
-                        dirty = true;
+            dirty = true;
+            status_msg.clear();
+            if mode == Mode::ConfirmQuit {
+                match k {
+                    Key::Char('y') | Key::Char('Y') => return Ok(()),
+                    Key::Char('s') | Key::Char('S') => {
+                        let mut all_saved = true;
+                        for b in buffers.iter_mut() {
+                            if b.modified() {
+                                if let Err(e) = b.save(false) {
+                                    let _ = write!(status_msg, "{}: {e}", b.name);
+                                    all_saved = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if all_saved {
+                            return Ok(());
+                        }
+                        mode = Mode::Edit;
                     }
+                    _ => mode = Mode::Edit,
+                }
+                continue;
+            }
+            if !matches!(k, Key::Ctrl(b'S')) {
+                pending_force_save = false;
+            }
+            match k {
+                Key::Ctrl(b'Q') => {
+                    if buffers.iter().any(|b| b.modified()) {
+                        mode = Mode::ConfirmQuit;
+                    } else {
+                        return Ok(());
+                    }
+                }
+                Key::Ctrl(b'S') => {
+                    last_edit_kind = KIND_NONE;
+                    let buf = &mut buffers[active];
+                    match buf.save(pending_force_save) {
+                        Ok(()) => {
+                            let _ = write!(status_msg, "saved {}", buf.name);
+                            pending_force_save = false;
+                        }
+                        Err(e) if e.to_string() == "file changed on disk" => {
+                            status_msg.push_str("file changed on disk — Ctrl+S again to overwrite");
+                            pending_force_save = true;
+                        }
+                        Err(e) => {
+                            let _ = write!(status_msg, "save failed: {e}");
+                            pending_force_save = false;
+                        }
+                    }
+                }
+                Key::Ctrl(b'Z') => {
+                    last_edit_kind = KIND_NONE;
+                    let buf = &mut buffers[active];
+                    if !buf.undo_group() {
+                        status_msg.push_str("nothing to undo");
+                    }
+                    buf.group_counter += 1;
+                }
+                Key::Ctrl(b'Y') => {
+                    last_edit_kind = KIND_NONE;
+                    let buf = &mut buffers[active];
+                    if !buf.redo_group() {
+                        status_msg.push_str("nothing to redo");
+                    }
+                    buf.group_counter += 1;
+                }
+                Key::Char(c) => {
+                    let mut enc = [0u8; 4];
+                    let s = c.encode_utf8(&mut enc);
+                    do_edit(&mut buffers[active], s.as_bytes(), KIND_INSERT, &mut last_edit_kind, &mut status_msg, &mut scratch);
+                }
+                Key::Enter => {
+                    do_edit(&mut buffers[active], b"\n", KIND_INSERT, &mut last_edit_kind, &mut status_msg, &mut scratch)
+                }
+                Key::Tab => {
+                    do_edit(&mut buffers[active], b"\t", KIND_INSERT, &mut last_edit_kind, &mut status_msg, &mut scratch)
+                }
+                Key::Backspace => {
+                    do_delete(&mut buffers[active], false, &mut last_edit_kind, &mut status_msg, &mut scratch)
+                }
+                Key::Delete => {
+                    do_delete(&mut buffers[active], true, &mut last_edit_kind, &mut status_msg, &mut scratch)
+                }
+                Key::Esc => {
+                    last_edit_kind = KIND_NONE;
+                    buffers[active].sel_anchor = None;
+                }
+                _ => {
+                    last_edit_kind = KIND_NONE;
+                    let buf = &mut buffers[active];
+                    let (base, shifted) = base_key(k);
+                    if shifted {
+                        if buf.sel_anchor.is_none() {
+                            buf.sel_anchor = Some(buf.cursor);
+                        }
+                    } else {
+                        buf.sel_anchor = None;
+                    }
+                    buf.group_counter += 1;
+                    apply_movement(buf, base, editor_rows, &mut scratch);
                 }
             }
         }
 
         if dirty && !term::poll_stdin(0)? {
             let buf = &mut buffers[active];
-            let cursor_screen =
-                build_view(buf, editor_rows as usize, cols as usize, &mut row_store, &mut scratch);
+            let cursor_screen = build_view(
+                buf,
+                editor_rows as usize,
+                cols as usize,
+                &mut row_store,
+                &mut row_sel,
+                &mut scratch,
+            );
             format_status(buf, &mut status_left, &mut status_right);
+            if mode == Mode::ConfirmQuit {
+                status_left.clear();
+                status_left.push_str(" Unsaved changes — y: quit  s: save all & quit  n: back");
+            } else if !status_msg.is_empty() {
+                let _ = write!(status_left, "  — {status_msg}");
+            }
             let tabs: Vec<TabInfo> = buffers
                 .iter()
-                .map(|b| TabInfo { name: &b.name, modified: b.modified })
+                .map(|b| TabInfo { name: &b.name, modified: b.modified() })
                 .collect(); // ponytail: tiny per-paint alloc, folded into S4 render cache
             let v = View {
                 cols,
@@ -176,6 +302,7 @@ fn run(buffers: &mut [Buffer]) -> std::io::Result<()> {
                 tabs: &tabs,
                 active_tab: active,
                 row_bytes: &row_store,
+                row_sel: &row_sel,
                 left_col: buffers[active].left_col,
                 cursor_screen,
                 status_left: &status_left,
@@ -189,6 +316,69 @@ fn run(buffers: &mut [Buffer]) -> std::io::Result<()> {
     }
 }
 
+// ---------------------------------------------------------------- editing
+
+fn do_edit(
+    buf: &mut Buffer,
+    bytes: &[u8],
+    kind: u8,
+    last_kind: &mut u8,
+    msg: &mut String,
+    scratch: &mut Vec<u8>,
+) {
+    if kind != *last_kind {
+        buf.group_counter += 1;
+        *last_kind = kind;
+    }
+    let (s, e) = buf.selection().unwrap_or((buf.cursor, buf.cursor));
+    let g = buf.group_counter;
+    match buf.replace(s, e, bytes, g) {
+        Ok(()) => {
+            buf.cursor = s + bytes.len() as u64;
+            buf.sel_anchor = None;
+            update_goal(buf, scratch);
+        }
+        Err(er) => msg.push_str(er),
+    }
+}
+
+fn do_delete(buf: &mut Buffer, forward: bool, last_kind: &mut u8, msg: &mut String, scratch: &mut Vec<u8>) {
+    let kind = if forward { KIND_DELETE } else { KIND_BACKSPACE };
+    if kind != *last_kind {
+        buf.group_counter += 1;
+        *last_kind = kind;
+    }
+    let (s, e) = match buf.selection() {
+        Some(r) => r,
+        None if forward => (buf.cursor, buf.next_boundary(buf.cursor)),
+        None => (buf.prev_boundary(buf.cursor), buf.cursor),
+    };
+    if s == e {
+        return;
+    }
+    let g = buf.group_counter;
+    match buf.replace(s, e, b"", g) {
+        Ok(()) => {
+            buf.cursor = s;
+            buf.sel_anchor = None;
+            update_goal(buf, scratch);
+        }
+        Err(er) => msg.push_str(er),
+    }
+}
+
+fn base_key(k: Key) -> (Key, bool) {
+    match k {
+        Key::SUp => (Key::Up, true),
+        Key::SDown => (Key::Down, true),
+        Key::SLeft => (Key::Left, true),
+        Key::SRight => (Key::Right, true),
+        Key::SHome => (Key::Home, true),
+        Key::SEnd => (Key::End, true),
+        _ => (k, false),
+    }
+}
+
 // --------------------------------------------------------------- movement
 
 fn line_slice(buf: &mut Buffer, line: u64, out: &mut Vec<u8>) {
@@ -196,6 +386,16 @@ fn line_slice(buf: &mut Buffer, line: u64, out: &mut Vec<u8>) {
     let e = buf.line_end(line);
     out.clear();
     buf.read_range(s, (e - s).min(LINE_CAP as u64), out);
+}
+
+fn update_goal(buf: &mut Buffer, scratch: &mut Vec<u8>) {
+    if buf.line_index.is_none() {
+        return;
+    }
+    let l = buf.line_of_byte(buf.cursor);
+    let start = buf.line_start(l);
+    line_slice(buf, l, scratch);
+    buf.goal_col = render::visual_col(scratch, (buf.cursor - start) as usize);
 }
 
 /// Returns true if anything changed (cursor or viewport).
@@ -211,12 +411,6 @@ fn apply_movement(buf: &mut Buffer, key: Key, editor_rows: u64, scratch: &mut Ve
 
 fn normal_movement(buf: &mut Buffer, key: Key, editor_rows: u64, scratch: &mut Vec<u8>) {
     let line = buf.line_of_byte(buf.cursor);
-    let update_goal = |buf: &mut Buffer, scratch: &mut Vec<u8>| {
-        let l = buf.line_of_byte(buf.cursor);
-        let start = buf.line_start(l);
-        line_slice(buf, l, scratch);
-        buf.goal_col = render::visual_col(scratch, (buf.cursor - start) as usize);
-    };
     let vertical = |buf: &mut Buffer, target: u64, scratch: &mut Vec<u8>| {
         line_slice(buf, target, scratch);
         buf.cursor = buf.line_start(target) + render::byte_at_col(scratch, buf.goal_col) as u64;
@@ -252,7 +446,7 @@ fn huge_movement(buf: &mut Buffer, key: Key, editor_rows: u64, scratch: &mut Vec
     let starts = window_row_starts(buf, editor_rows as usize + 1, scratch);
     let row_of = |c: u64| starts.iter().rposition(|&s| s <= c).unwrap_or(0);
     match key {
-        Key::Left => buf.cursor = buf.prev_boundary(buf.cursor).max(0),
+        Key::Left => buf.cursor = buf.prev_boundary(buf.cursor),
         Key::Right => {
             let n = buf.next_boundary(buf.cursor);
             buf.cursor = n.min(buf.len());
@@ -338,12 +532,14 @@ fn prev_line_start(buf: &mut Buffer, from: u64, scratch: &mut Vec<u8>) -> u64 {
 
 // ----------------------------------------------------------------- view
 
-/// Scroll to keep the cursor visible, fill row_store, return screen cursor.
+/// Scroll to keep the cursor visible, fill row_store/row_sel, return the
+/// screen cursor position.
 fn build_view(
     buf: &mut Buffer,
     editor_rows: usize,
     cols: usize,
     row_store: &mut Vec<Vec<u8>>,
+    row_sel: &mut Vec<Option<(usize, usize)>>,
     scratch: &mut Vec<u8>,
 ) -> (u16, u16) {
     row_store.iter_mut().for_each(|r| r.clear());
@@ -351,6 +547,9 @@ fn build_view(
         row_store.push(Vec::new());
     }
     row_store.truncate(editor_rows);
+    row_sel.clear();
+    row_sel.resize(editor_rows, None);
+    let sel = buf.selection();
 
     if buf.huge || buf.line_index.is_none() {
         let mut starts = window_row_starts(buf, editor_rows + 1, scratch);
@@ -364,10 +563,12 @@ fn build_view(
         let r = r.min(editor_rows - 1);
         for (i, slot) in row_store.iter_mut().enumerate() {
             if let Some(&s) = starts.get(i) {
-                let end = starts.get(i + 1).map(|e| e - 1).unwrap_or_else(|| {
-                    (s + LINE_CAP as u64).min(buf.len())
-                });
+                let end = starts
+                    .get(i + 1)
+                    .map(|e| e - 1)
+                    .unwrap_or_else(|| (s + LINE_CAP as u64).min(buf.len()));
                 buf.read_range(s, (end - s).min(LINE_CAP as u64), slot);
+                row_sel[i] = intersect_sel(sel, s, slot.len());
             }
         }
         let row_start = starts.get(r).copied().unwrap_or(buf.top_byte);
@@ -391,6 +592,7 @@ fn build_view(
             let s = buf.line_start(line);
             let e = buf.line_end(line);
             buf.read_range(s, (e - s).min(LINE_CAP as u64), slot);
+            row_sel[i] = intersect_sel(sel, s, slot.len());
         }
     }
     let line_start = buf.line_start(cursor_line);
@@ -399,6 +601,17 @@ fn build_view(
     let vcol = render::visual_col(scratch, scratch.len());
     clamp_left(buf, vcol, cols);
     ((vcol - buf.left_col) as u16, (cursor_line - buf.top_line) as u16)
+}
+
+fn intersect_sel(sel: Option<(u64, u64)>, row_start: u64, row_len: usize) -> Option<(usize, usize)> {
+    let (a, b) = sel?;
+    let lo = a.max(row_start);
+    let hi = b.min(row_start + row_len as u64);
+    if lo < hi {
+        Some(((lo - row_start) as usize, (hi - row_start) as usize))
+    } else {
+        None
+    }
 }
 
 fn clamp_left(buf: &mut Buffer, vcol: usize, cols: usize) {
@@ -414,7 +627,7 @@ fn format_status(buf: &mut Buffer, left: &mut String, right: &mut String) {
     left.clear();
     right.clear();
     let _ = write!(left, " {}", buf.name);
-    if buf.modified {
+    if buf.modified() {
         left.push('*');
     }
     if buf.readonly {

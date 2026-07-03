@@ -37,6 +37,8 @@ pub struct View<'a> {
     pub active_tab: usize,
     /// Pre-read bytes of each visible editor row (without trailing \n).
     pub row_bytes: &'a [Vec<u8>],
+    /// Selection span per row as byte offsets into that row's bytes.
+    pub row_sel: &'a [Option<(usize, usize)>],
     pub left_col: usize,
     /// Screen cursor position, 0-based within the editor area.
     pub cursor_screen: (u16, u16),
@@ -115,11 +117,22 @@ pub fn byte_at_col(bytes: &[u8], goal: usize) -> usize {
 }
 
 /// Emit one editor row: skip `left` cells, render at most `width` cells.
-fn emit_row(out: &mut Vec<u8>, bytes: &[u8], left: usize, width: usize) {
+/// `sel` is a byte span within `bytes` rendered in reverse video.
+fn emit_row(out: &mut Vec<u8>, bytes: &[u8], left: usize, width: usize, sel: Option<(usize, usize)>) {
     let mut cell = 0usize;
     let mut i = 0usize;
     let limit = left + width;
+    let mut in_sel = false;
     while i < bytes.len() && cell < limit {
+        if let Some((a, b)) = sel {
+            if !in_sel && i >= a && i < b {
+                out.extend_from_slice(b"\x1b[7m");
+                in_sel = true;
+            } else if in_sel && i >= b {
+                out.extend_from_slice(b"\x1b[27m");
+                in_sel = false;
+            }
+        }
         let (consumed, w, escape) = match next_token(&bytes[i..], cell) {
             Token::Char(n, w) => (n, w, None),
             Token::Escape(b) => (1, 4, Some(b)),
@@ -148,6 +161,9 @@ fn emit_row(out: &mut Vec<u8>, bytes: &[u8], left: usize, width: usize) {
         }
         i += consumed;
         cell += w;
+    }
+    if in_sel {
+        out.extend_from_slice(b"\x1b[27m");
     }
     out.extend_from_slice(b"\x1b[K");
 }
@@ -181,7 +197,9 @@ pub fn paint(f: &mut FrameBuf, v: &View) {
     for r in 0..editor_rows {
         let _ = write!(b, "\x1b[{};1H", r + 2);
         match v.row_bytes.get(r) {
-            Some(bytes) => emit_row(b, bytes, v.left_col, v.cols as usize),
+            Some(bytes) => {
+                emit_row(b, bytes, v.left_col, v.cols as usize, v.row_sel.get(r).copied().flatten())
+            }
             None => b.extend_from_slice(b"\x1b[K"),
         }
     }
@@ -224,8 +242,20 @@ mod tests {
 
     fn row(bytes: &[u8], left: usize, width: usize) -> String {
         let mut out = Vec::new();
-        emit_row(&mut out, bytes, left, width);
+        emit_row(&mut out, bytes, left, width, None);
         String::from_utf8_lossy(&out).into_owned()
+    }
+
+    #[test]
+    fn selection_reverse_video() {
+        let mut out = Vec::new();
+        emit_row(&mut out, b"hello", 0, 80, Some((1, 4)));
+        let s = String::from_utf8_lossy(&out).into_owned();
+        assert_eq!(s, "h\x1b[7mell\x1b[27mo\x1b[K");
+        out.clear();
+        emit_row(&mut out, b"ab", 0, 80, Some((1, 2))); // sel to end of row
+        let s = String::from_utf8_lossy(&out).into_owned();
+        assert_eq!(s, "a\x1b[7mb\x1b[27m\x1b[K");
     }
 
     #[test]
@@ -293,12 +323,14 @@ mod tests {
         let mut f = FrameBuf::new();
         let tabs = [TabInfo { name: "a.txt", modified: true }];
         let rows = vec![b"line one".to_vec(), b"line two".to_vec()];
+        let sels = vec![None; rows.len()];
         let v = View {
             cols: 40,
             rows: 10,
             tabs: &tabs,
             active_tab: 0,
             row_bytes: &rows,
+            row_sel: &sels,
             left_col: 0,
             cursor_screen: (2, 1),
             status_left: " a.txt *",

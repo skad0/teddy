@@ -19,6 +19,13 @@ pub enum Key {
     End,
     PageUp,
     PageDown,
+    // shift-modified movement (CSI 1;2X) drives selection
+    SUp,
+    SDown,
+    SLeft,
+    SRight,
+    SHome,
+    SEnd,
 }
 
 enum Step {
@@ -113,7 +120,16 @@ fn parse_csi(b: &[u8]) -> Step {
         if (0x40..=0x7e).contains(&c) {
             let params = &b[2..j];
             let n = j + 1;
+            // xterm modifier encoding: "1;2" = shift. Other modifiers fall
+            // back to the unshifted key; chord bindings are plugin-era work.
+            let shifted = params == b"1;2";
             let key = match c {
+                b'A' if shifted => Some(Key::SUp),
+                b'B' if shifted => Some(Key::SDown),
+                b'C' if shifted => Some(Key::SRight),
+                b'D' if shifted => Some(Key::SLeft),
+                b'H' if shifted => Some(Key::SHome),
+                b'F' if shifted => Some(Key::SEnd),
                 b'A' => Some(Key::Up),
                 b'B' => Some(Key::Down),
                 b'C' => Some(Key::Right),
@@ -123,6 +139,8 @@ fn parse_csi(b: &[u8]) -> Step {
                 b'~' => match params {
                     b"1" | b"7" => Some(Key::Home),
                     b"4" | b"8" => Some(Key::End),
+                    b"1;2" | b"7;2" => Some(Key::SHome),
+                    b"4;2" | b"8;2" => Some(Key::SEnd),
                     b"3" => Some(Key::Delete),
                     b"5" => Some(Key::PageUp),
                     b"6" => Some(Key::PageDown),
