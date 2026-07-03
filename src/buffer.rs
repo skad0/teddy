@@ -16,6 +16,17 @@ pub struct LineIndex {
     pub complete: bool,
 }
 
+/// Cooperative newline-index construction (spec §5.4 progressive open):
+/// the viewport shows immediately via the byte-window path; Ln/Col UX
+/// becomes exact once the build finishes.
+pub struct IndexBuild {
+    pub pos: u64,
+    newlines: Vec<u64>,
+}
+
+/// Files above this build their newline index cooperatively.
+const SYNC_INDEX_MAX: u64 = 8 * 1024 * 1024;
+
 pub struct UndoEntry {
     pub start: u64,
     pub new_len: u64,
@@ -35,6 +46,7 @@ pub struct Buffer {
     pub adds: AddStore,
     pub chain: PieceChain,
     pub line_index: Option<LineIndex>,
+    pub index_build: Option<IndexBuild>,
     pub revision: u64,
     pub path: Option<PathBuf>,
     pub name: String,
@@ -91,7 +103,11 @@ impl Buffer {
         b.readonly = binary; // explicit force-edit mode is a later stage
         b.huge = huge;
         if !huge {
-            b.build_line_index()?; // ponytail: synchronous; cooperative build lands in S3
+            if len <= SYNC_INDEX_MAX {
+                b.build_line_index()?;
+            } else {
+                b.index_build = Some(IndexBuild { pos: 0, newlines: Vec::new() });
+            }
         }
         Ok(b)
     }
@@ -107,6 +123,7 @@ impl Buffer {
             } else {
                 None
             },
+            index_build: None,
             revision: 0,
             path,
             name,
@@ -265,7 +282,43 @@ impl Buffer {
         });
         self.redo.clear();
         self.revision += 1;
+        if self.index_build.is_some() {
+            // ponytail: an edit invalidates the partial scan; restart —
+            // build slices are fast and edits-during-open are rare
+            self.index_build = Some(IndexBuild { pos: 0, newlines: Vec::new() });
+        }
         Ok(())
+    }
+
+    /// Advance the cooperative index build. Returns true when finished.
+    pub fn step_index_build(&mut self, budget: u64, scratch: &mut Vec<u8>) -> bool {
+        let Some(mut ib) = self.index_build.take() else { return true };
+        let len = self.len();
+        let mut spent = 0u64;
+        while spent < budget && ib.pos < len {
+            scratch.clear();
+            let take = (256 * 1024).min(len - ib.pos).min(budget - spent);
+            self.read_range(ib.pos, take, scratch);
+            if self.io_error {
+                // never install an index built from failed reads; the
+                // buffer stays NOIDX and the statusline shows IOERR
+                return true;
+            }
+            for (i, &b) in scratch.iter().enumerate() {
+                if b == b'\n' {
+                    ib.newlines.push(ib.pos + i as u64);
+                }
+            }
+            ib.pos += take;
+            spent += take;
+        }
+        if ib.pos >= len {
+            self.line_index = Some(LineIndex { newlines: ib.newlines, complete: true });
+            true
+        } else {
+            self.index_build = Some(ib);
+            false
+        }
     }
 
     /// Undo the most recent group. Returns false if nothing to undo.
@@ -318,6 +371,10 @@ impl Buffer {
             self.cursor = e.cursor_before.min(self.len());
             self.state_id = e.before_id;
             self.revision += 1;
+        }
+        if self.index_build.is_some() {
+            // undo/redo mutates content like any edit: restart the scan
+            self.index_build = Some(IndexBuild { pos: 0, newlines: Vec::new() });
         }
         self.sel_anchor = None;
         true

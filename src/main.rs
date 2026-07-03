@@ -8,6 +8,7 @@ mod input;
 #[allow(dead_code)] // wrapped into S8 plugin executables
 mod lex;
 mod render;
+mod search;
 mod storage;
 mod term;
 
@@ -112,11 +113,26 @@ fn main() -> ExitCode {
 /// head; a windowed measure replaces this if it ever matters.
 const LINE_CAP: usize = 256 * 1024;
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone, Copy)]
 enum Mode {
     Edit,
     ConfirmQuit,
+    /// Statusline text prompt (find / replace flows).
+    Prompt(PromptKind),
+    /// Interactive replace: a match is highlighted, or the search job is
+    /// still hunting for the next one.
+    ReplaceConfirm,
 }
+
+#[derive(PartialEq, Clone, Copy)]
+enum PromptKind {
+    Find,
+    ReplaceNeedle,
+    ReplaceWith,
+}
+
+/// Bytes scanned per idle work slice (spec §18 fixed slices).
+const SLICE: u64 = 2 * 1024 * 1024;
 
 // undo grouping kinds
 const KIND_NONE: u8 = 0;
@@ -132,6 +148,16 @@ fn run(buffers: &mut [Buffer]) -> std::io::Result<()> {
     let mut status_msg = String::new();
     let mut pending_force_save = false;
     let mut last_edit_kind = KIND_NONE;
+    // find/replace state
+    let mut prompt = String::new();
+    let mut find_needle: Vec<u8> = Vec::new();
+    let mut replace_with: Vec<u8> = Vec::new();
+    let mut search_job: Option<search::Search> = None;
+    let mut replace_job: Option<search::ReplaceAll> = None;
+    let mut confirm_match: Option<u64> = None;
+    let mut replace_scope_end: u64 = 0;
+    let mut replace_count: u64 = 0;
+    let mut job_scratch: Vec<u8> = Vec::new();
 
     let mut frame = FrameBuf::new();
     let mut parser = Parser::new();
@@ -145,8 +171,13 @@ fn run(buffers: &mut [Buffer]) -> std::io::Result<()> {
     let mut out = std::io::stdout().lock();
 
     loop {
-        // spec §18: input drains before paint (zero timeout while dirty)
-        let timeout = if dirty { 0 } else if parser.has_pending() { 10 } else { 250 };
+        // spec §18: input drains before paint (zero timeout while dirty
+        // or while cooperative jobs want their next slice)
+        let jobs_active = search_job.is_some()
+            || replace_job.is_some()
+            || buffers[active].index_build.is_some();
+        let timeout =
+            if dirty || jobs_active { 0 } else if parser.has_pending() { 10 } else { 250 };
         if term::poll_stdin(timeout)? {
             let n = term::read_stdin(&mut read_buf)?;
             if n == 0 {
@@ -169,33 +200,183 @@ fn run(buffers: &mut [Buffer]) -> std::io::Result<()> {
         for k in keys.drain(..) {
             dirty = true;
             status_msg.clear();
-            if mode == Mode::ConfirmQuit {
-                match k {
-                    Key::Char('y') | Key::Char('Y') => return Ok(()),
-                    Key::Char('s') | Key::Char('S') => {
-                        let mut all_saved = true;
-                        for b in buffers.iter_mut() {
-                            if b.modified() {
-                                if let Err(e) = b.save(false) {
-                                    let _ = write!(status_msg, "{}: {e}", b.name);
-                                    all_saved = false;
-                                    break;
+            match mode {
+                Mode::ConfirmQuit => {
+                    match k {
+                        Key::Char('y') | Key::Char('Y') => return Ok(()),
+                        Key::Char('s') | Key::Char('S') => {
+                            let mut all_saved = true;
+                            for b in buffers.iter_mut() {
+                                if b.modified() {
+                                    if let Err(e) = b.save(false) {
+                                        let _ = write!(status_msg, "{}: {e}", b.name);
+                                        all_saved = false;
+                                        break;
+                                    }
+                                }
+                            }
+                            if all_saved {
+                                return Ok(());
+                            }
+                            mode = Mode::Edit;
+                        }
+                        _ => mode = Mode::Edit,
+                    }
+                    continue;
+                }
+                Mode::Prompt(kind) => {
+                    match k {
+                        // 64 KiB cap keeps one search slice within budget
+                        Key::Char(c) if prompt.len() < 64 * 1024 => prompt.push(c),
+                        Key::Char(_) => {}
+                        Key::Backspace => {
+                            prompt.pop();
+                        }
+                        Key::Esc => {
+                            prompt.clear();
+                            mode = Mode::Edit;
+                        }
+                        Key::Enter => match kind {
+                            PromptKind::Find => {
+                                mode = Mode::Edit;
+                                if !prompt.is_empty() {
+                                    find_needle = prompt.as_bytes().to_vec();
+                                    search_job = Some(search::Search::new(
+                                        find_needle.clone(),
+                                        buffers[active].cursor,
+                                    ));
+                                }
+                                prompt.clear();
+                            }
+                            PromptKind::ReplaceNeedle => {
+                                if prompt.is_empty() {
+                                    mode = Mode::Edit;
+                                } else {
+                                    find_needle = prompt.as_bytes().to_vec();
+                                    prompt.clear();
+                                    mode = Mode::Prompt(PromptKind::ReplaceWith);
+                                }
+                            }
+                            PromptKind::ReplaceWith => {
+                                replace_with = prompt.as_bytes().to_vec();
+                                prompt.clear();
+                                let buf = &mut buffers[active];
+                                let (from, end) =
+                                    buf.selection().unwrap_or((buf.cursor, buf.len()));
+                                replace_scope_end = end;
+                                replace_count = 0;
+                                buf.group_counter += 1;
+                                buf.sel_anchor = None;
+                                search_job =
+                                    Some(search::Search::new_no_wrap(find_needle.clone(), from));
+                                confirm_match = None;
+                                mode = Mode::ReplaceConfirm;
+                            }
+                        },
+                        _ => {}
+                    }
+                    continue;
+                }
+                Mode::ReplaceConfirm => {
+                    match (k, confirm_match) {
+                        (Key::Esc, _) => {
+                            search_job = None;
+                            replace_job = None;
+                            confirm_match = None;
+                            buffers[active].sel_anchor = None;
+                            let _ = write!(status_msg, "replaced {replace_count}");
+                            mode = Mode::Edit;
+                        }
+                        (Key::Char('y') | Key::Enter, Some(at)) => {
+                            let buf = &mut buffers[active];
+                            let n = find_needle.len() as u64;
+                            let g = buf.group_counter;
+                            match buf.replace(at, at + n, &replace_with, g) {
+                                Ok(()) => {
+                                    replace_count += 1;
+                                    let delta = replace_with.len() as i64 - n as i64;
+                                    replace_scope_end =
+                                        (replace_scope_end as i64 + delta) as u64;
+                                    buf.cursor = at + replace_with.len() as u64;
+                                    buf.sel_anchor = None;
+                                    search_job = Some(search::Search::new_no_wrap(
+                                        find_needle.clone(),
+                                        buf.cursor,
+                                    ));
+                                    confirm_match = None;
+                                }
+                                Err(e) => {
+                                    status_msg.push_str(e);
+                                    mode = Mode::Edit;
                                 }
                             }
                         }
-                        if all_saved {
-                            return Ok(());
+                        (Key::Char('n'), Some(at)) => {
+                            search_job = Some(search::Search::new_no_wrap(
+                                find_needle.clone(),
+                                at + 1,
+                            ));
+                            confirm_match = None;
+                            buffers[active].sel_anchor = None;
                         }
-                        mode = Mode::Edit;
+                        (Key::Char('a'), Some(at)) => {
+                            let buf = &mut buffers[active];
+                            if buf.huge {
+                                // spec §10: replace-all disabled in huge mode
+                                status_msg.push_str("replace-all is disabled for huge files");
+                            } else {
+                                let g = buf.group_counter;
+                                buf.sel_anchor = None;
+                                replace_job = Some(search::ReplaceAll::new(
+                                    find_needle.clone(),
+                                    replace_with.clone(),
+                                    at,
+                                    replace_scope_end,
+                                    g,
+                                ));
+                                confirm_match = None;
+                                search_job = None;
+                            }
+                        }
+                        _ => {} // still hunting, or unbound key
                     }
-                    _ => mode = Mode::Edit,
+                    continue;
                 }
-                continue;
+                Mode::Edit => {}
+            }
+            // any manual key cancels an in-flight search (spec: cancellable)
+            if search_job.is_some() {
+                search_job = None;
             }
             if !matches!(k, Key::Ctrl(b'S')) {
                 pending_force_save = false;
             }
             match k {
+                Key::Ctrl(b'F') => {
+                    last_edit_kind = KIND_NONE;
+                    prompt.clear();
+                    mode = Mode::Prompt(PromptKind::Find);
+                }
+                Key::Ctrl(b'G') => {
+                    last_edit_kind = KIND_NONE;
+                    if find_needle.is_empty() {
+                        status_msg.push_str("no previous search");
+                    } else {
+                        search_job = Some(search::Search::new(
+                            find_needle.clone(),
+                            buffers[active].cursor,
+                        ));
+                    }
+                }
+                Key::Ctrl(b'R') => {
+                    last_edit_kind = KIND_NONE;
+                    if buffers[active].readonly {
+                        status_msg.push_str("buffer is read-only");
+                    } else {
+                        prompt.clear();
+                        mode = Mode::Prompt(PromptKind::ReplaceNeedle);
+                    }
+                }
                 Key::Ctrl(b'Q') => {
                     if buffers.iter().any(|b| b.modified()) {
                         mode = Mode::ConfirmQuit;
@@ -275,6 +456,68 @@ fn run(buffers: &mut [Buffer]) -> std::io::Result<()> {
             }
         }
 
+        // cooperative work slice (spec §18): runs only when input is idle
+        if !term::poll_stdin(0)? {
+            if let Some(s) = &mut search_job {
+                let buf = &mut buffers[active];
+                match s.step(buf, SLICE, &mut job_scratch) {
+                    search::Step::Found(at) => {
+                        let n = s.needle.len() as u64;
+                        search_job = None;
+                        if mode == Mode::ReplaceConfirm && at + n > replace_scope_end {
+                            // match starts past the selection scope: done
+                            buf.sel_anchor = None;
+                            status_msg.clear();
+                            let _ = write!(status_msg, "replaced {replace_count} — end of selection");
+                            mode = Mode::Edit;
+                        } else {
+                            buf.sel_anchor = Some(at);
+                            buf.cursor = at + n;
+                            update_goal(buf, &mut job_scratch);
+                            if mode == Mode::ReplaceConfirm {
+                                confirm_match = Some(at);
+                            }
+                        }
+                    }
+                    search::Step::NotFound => {
+                        search_job = None;
+                        if mode == Mode::ReplaceConfirm {
+                            buf.sel_anchor = None;
+                            status_msg.clear();
+                            let _ = write!(status_msg, "replaced {replace_count} — no more matches");
+                            mode = Mode::Edit;
+                        } else {
+                            status_msg.clear();
+                            status_msg.push_str("not found");
+                        }
+                    }
+                    search::Step::Running => {}
+                }
+                dirty = true;
+            } else if let Some(j) = &mut replace_job {
+                let buf = &mut buffers[active];
+                match j.step(buf, SLICE, &mut job_scratch) {
+                    Ok(true) => {
+                        status_msg.clear();
+                        let _ = write!(status_msg, "replaced {}", replace_count + j.count);
+                        replace_job = None;
+                        mode = Mode::Edit;
+                    }
+                    Ok(false) => {}
+                    Err(e) => {
+                        status_msg.clear();
+                        status_msg.push_str(e);
+                        replace_job = None;
+                        mode = Mode::Edit;
+                    }
+                }
+                dirty = true;
+            } else if buffers[active].index_build.is_some() {
+                buffers[active].step_index_build(4 * 1024 * 1024, &mut job_scratch);
+                dirty = true;
+            }
+        }
+
         if dirty && !term::poll_stdin(0)? {
             let buf = &mut buffers[active];
             let cursor_screen = build_view(
@@ -286,11 +529,44 @@ fn run(buffers: &mut [Buffer]) -> std::io::Result<()> {
                 &mut scratch,
             );
             format_status(buf, &mut status_left, &mut status_right);
-            if mode == Mode::ConfirmQuit {
-                status_left.clear();
-                status_left.push_str(" Unsaved changes — y: quit  s: save all & quit  n: back");
-            } else if !status_msg.is_empty() {
-                let _ = write!(status_left, "  — {status_msg}");
+            match mode {
+                Mode::ConfirmQuit => {
+                    status_left.clear();
+                    status_left.push_str(" Unsaved changes — y: quit  s: save all & quit  n: back");
+                }
+                Mode::Prompt(PromptKind::Find) => {
+                    status_left.clear();
+                    let _ = write!(status_left, " Find: {prompt}");
+                }
+                Mode::Prompt(PromptKind::ReplaceNeedle) => {
+                    status_left.clear();
+                    let _ = write!(status_left, " Replace: {prompt}");
+                }
+                Mode::Prompt(PromptKind::ReplaceWith) => {
+                    status_left.clear();
+                    let _ = write!(
+                        status_left,
+                        " Replace {} with: {prompt}",
+                        String::from_utf8_lossy(&find_needle)
+                    );
+                }
+                Mode::ReplaceConfirm if confirm_match.is_some() => {
+                    status_left.clear();
+                    status_left.push_str(" Replace? y: yes  n: skip  a: all  Esc: stop");
+                }
+                _ => {
+                    if let Some(s) = &search_job {
+                        let _ = write!(status_left, "  searching… {}%", s.progress(buf.len()));
+                    } else if let Some(j) = &replace_job {
+                        let _ = write!(status_left, "  replacing… {}%", j.progress(buf.len()));
+                    } else if let Some(ib) = &buf.index_build {
+                        let pct = if buf.len() == 0 { 100 } else { ib.pos * 100 / buf.len() };
+                        let _ = write!(status_left, "  indexing… {pct}%");
+                    }
+                    if !status_msg.is_empty() {
+                        let _ = write!(status_left, "  — {status_msg}");
+                    }
+                }
             }
             let tabs: Vec<TabInfo> = buffers
                 .iter()
