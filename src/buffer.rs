@@ -500,6 +500,17 @@ impl Buffer {
         Ok(())
     }
 
+    /// Point the buffer at a new path and save there (palette save-as).
+    pub fn save_as(&mut self, path: PathBuf) -> io::Result<()> {
+        self.name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
+        self.path = Some(path);
+        self.disk_state = None; // new target: no stale-guard basis yet
+        self.save(true)
+    }
+
     fn push_undo(&mut self, e: UndoEntry) {
         self.undo_bytes += e.byte_cost;
         self.undo.push(e);

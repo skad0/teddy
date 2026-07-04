@@ -2,12 +2,12 @@
 //! input first, paint on dirty (spec §18).
 
 mod buffer;
-#[allow(dead_code)] // wired into the S6 picker
 mod ignore;
 mod input;
 #[allow(dead_code)] // wrapped into S8 plugin executables
 mod lex;
 mod lines;
+mod picker;
 mod render;
 mod search;
 mod storage;
@@ -19,11 +19,10 @@ use input::{Key, Parser};
 use render::{FrameBuf, RenderCache, View};
 use std::fmt::Write as _;
 use std::io::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 struct Args {
-    #[allow(dead_code)] // workspace root drives the S6 picker
     workspace: Option<PathBuf>,
     files: Vec<PathBuf>,
     follow: bool,
@@ -108,7 +107,12 @@ fn main() -> ExitCode {
         }
     };
 
-    let result = run(&mut buffers);
+    // picker/`open` root: explicit workspace or the process cwd (spec §17)
+    let root = args
+        .workspace
+        .clone()
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let result = run(&mut buffers, &root);
     drop(guard);
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -133,7 +137,23 @@ enum Mode {
     /// Interactive replace: a match is highlighted, or the search job is
     /// still hunting for the next one.
     ReplaceConfirm,
+    /// Ctrl+P command palette (typed args, suggestion list overlay).
+    Palette,
+    /// Ctrl+O lazy tree file picker.
+    Picker,
 }
+
+/// Palette commands: (name, usage shown in the suggestion list).
+const COMMANDS: &[(&str, &str)] = &[
+    ("goto", "goto <line>"),
+    ("open", "open <path>"),
+    ("tab", "tab <n|next|prev>"),
+    ("save", "save"),
+    ("save-as", "save-as <path>"),
+    ("reload", "reload from disk"),
+    ("follow", "toggle follow mode"),
+    ("quit", "quit"),
+];
 
 #[derive(PartialEq, Clone, Copy)]
 enum PromptKind {
@@ -151,8 +171,8 @@ const KIND_INSERT: u8 = 1;
 const KIND_BACKSPACE: u8 = 2;
 const KIND_DELETE: u8 = 3;
 
-fn run(buffers: &mut [Buffer]) -> std::io::Result<()> {
-    let active = 0usize;
+fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
+    let mut active = 0usize;
     let (mut cols, mut rows) = term::size();
     let mut dirty = true;
     let mut mode = Mode::Edit;
@@ -169,6 +189,9 @@ fn run(buffers: &mut [Buffer]) -> std::io::Result<()> {
     let mut replace_scope_end: u64 = 0;
     let mut replace_count: u64 = 0;
     let mut job_scratch: Vec<u8> = Vec::new();
+    let mut picker_state: Option<picker::Picker> = None;
+    let mut palette_sel = 0usize;
+    let mut pick_top = 0usize;
 
     let mut frame = FrameBuf::new();
     let mut render_cache = RenderCache::new();
@@ -204,6 +227,7 @@ fn run(buffers: &mut [Buffer]) -> std::io::Result<()> {
         // or while cooperative jobs want their next slice)
         let jobs_active = search_job.is_some()
             || replace_job.is_some()
+            || picker_state.as_ref().is_some_and(|p| p.wants_step())
             || buffers[active].index_build.is_some();
         let timeout =
             if dirty || jobs_active { 0 } else if parser.has_pending() { 10 } else { 250 };
@@ -420,6 +444,248 @@ fn run(buffers: &mut [Buffer]) -> std::io::Result<()> {
                     }
                     continue;
                 }
+                Mode::Palette => {
+                    match k {
+                        Key::Esc => {
+                            prompt.clear();
+                            mode = Mode::Edit;
+                        }
+                        Key::Char(c) if prompt.len() < 4096 => prompt.push(c),
+                        Key::Char(_) => {}
+                        Key::Backspace => {
+                            prompt.pop();
+                        }
+                        Key::Up => palette_sel = palette_sel.saturating_sub(1),
+                        Key::Down => palette_sel += 1,
+                        Key::Tab => {
+                            let tok = prompt.split_whitespace().next().unwrap_or("");
+                            let matches: Vec<_> = COMMANDS
+                                .iter()
+                                .copied()
+                                .filter(|(name, _)| prompt.is_empty() || name.starts_with(tok))
+                                .collect();
+                            if !matches.is_empty() {
+                                let i = palette_sel.min(matches.len() - 1);
+                                prompt.clear();
+                                prompt.push_str(matches[i].0);
+                                prompt.push(' ');
+                            }
+                        }
+                        Key::Enter => {
+                            let line = std::mem::take(&mut prompt);
+                            mode = Mode::Edit;
+                            let mut parts = line.splitn(2, char::is_whitespace);
+                            let tok = parts.next().unwrap_or("");
+                            let arg = parts.next().unwrap_or("").trim();
+                            let exact = COMMANDS.iter().find(|(name, _)| *name == tok);
+                            let cmd = if let Some((name, _)) = exact {
+                                Some(*name)
+                            } else {
+                                let mut hits = COMMANDS.iter().filter(|(name, _)| name.starts_with(tok));
+                                let first = hits.next().map(|(name, _)| *name);
+                                if first.is_some() && hits.next().is_none() {
+                                    first
+                                } else {
+                                    None
+                                }
+                            };
+                            match cmd {
+                                Some("goto") => {
+                                    if buffers[active].line_index.is_none() {
+                                        status_msg.push_str("no line index yet");
+                                    } else if let Ok(n) = arg.parse::<u64>() {
+                                        let buf = &mut buffers[active];
+                                        let n = n.clamp(1, buf.line_count());
+                                        buf.cursor = buf.line_start(n - 1);
+                                        buf.goal_col = 0;
+                                        buf.sel_anchor = None;
+                                    } else {
+                                        status_msg.push_str("goto <line>");
+                                    }
+                                }
+                                Some("open") => {
+                                    if arg.is_empty() {
+                                        status_msg.push_str("open <path>");
+                                    } else {
+                                        let path = PathBuf::from(arg);
+                                        let path = if path.is_absolute() { path } else { root.join(path) };
+                                        match Buffer::open(&path) {
+                                            Ok(b) => {
+                                                search_job = None;
+                                                replace_job = None;
+                                                confirm_match = None;
+                                                buffers.push(b);
+                                                active = buffers.len() - 1;
+                                                if let (Some(w), Some(p)) =
+                                                    (watcher.as_mut(), buffers[active].path.clone())
+                                                {
+                                                    let _ = w.watch(active as u64, &p);
+                                                }
+                                            }
+                                            Err(e) => {
+                                                let _ = write!(status_msg, "{arg}: {e}");
+                                            }
+                                        }
+                                    }
+                                }
+                                Some("tab") => match arg {
+                                    "next" => {
+                                        search_job = None;
+                                        replace_job = None;
+                                        confirm_match = None;
+                                        active = (active + 1) % buffers.len();
+                                    }
+                                    "prev" => {
+                                        search_job = None;
+                                        replace_job = None;
+                                        confirm_match = None;
+                                        active = (active + buffers.len() - 1) % buffers.len();
+                                    }
+                                    _ => {
+                                        if let Ok(n) = arg.parse::<usize>() {
+                                            if (1..=buffers.len()).contains(&n) {
+                                                search_job = None;
+                                                replace_job = None;
+                                                confirm_match = None;
+                                                active = n - 1;
+                                            } else {
+                                                status_msg.push_str("tab <n|next|prev>");
+                                            }
+                                        } else {
+                                            status_msg.push_str("tab <n|next|prev>");
+                                        }
+                                    }
+                                },
+                                Some("save") => {
+                                    let buf = &mut buffers[active];
+                                    match buf.save(false) {
+                                        Ok(()) => {
+                                            let _ = write!(status_msg, "saved {}", buf.name);
+                                            if let (Some(w), Some(p)) =
+                                                (watcher.as_mut(), buf.path.clone())
+                                            {
+                                                let _ = w.watch(active as u64, &p);
+                                            }
+                                        }
+                                        Err(e) => {
+                                            let _ = write!(status_msg, "save failed: {e}");
+                                        }
+                                    }
+                                }
+                                Some("save-as") => {
+                                    if arg.is_empty() {
+                                        status_msg.push_str("save-as <path>");
+                                    } else {
+                                        let path = PathBuf::from(arg);
+                                        let path = if path.is_absolute() { path } else { root.join(path) };
+                                        let buf = &mut buffers[active];
+                                        match buf.save_as(path) {
+                                            Ok(()) => {
+                                                let _ = write!(status_msg, "saved {}", buf.name);
+                                                if let (Some(w), Some(p)) =
+                                                    (watcher.as_mut(), buf.path.clone())
+                                                {
+                                                    let _ = w.watch(active as u64, &p);
+                                                }
+                                            }
+                                            Err(e) => {
+                                                let _ = write!(status_msg, "save failed: {e}");
+                                            }
+                                        }
+                                    }
+                                }
+                                Some("reload") => {
+                                    if buffers[active].modified() {
+                                        status_msg.push_str("unsaved changes — save or undo first");
+                                    } else {
+                                        match buffers[active].reload() {
+                                            Ok(()) => {
+                                                status_msg.push_str("reloaded");
+                                                search_job = None;
+                                                replace_job = None;
+                                                confirm_match = None;
+                                            }
+                                            Err(e) => {
+                                                let _ = write!(status_msg, "{e}");
+                                            }
+                                        }
+                                    }
+                                }
+                                Some("follow") => {
+                                    let buf = &mut buffers[active];
+                                    if !buf.follow && buf.modified() {
+                                        status_msg.push_str("unsaved changes — save before follow");
+                                    } else if !buf.follow {
+                                        buf.follow = true;
+                                        buf.readonly = true;
+                                        buf.cursor = buf.len();
+                                        status_msg.push_str("follow on");
+                                    } else {
+                                        buf.follow = false;
+                                        buf.readonly = buf.binary;
+                                        status_msg.push_str("follow off");
+                                    }
+                                }
+                                Some("quit") => {
+                                    if buffers.iter().any(|b| b.modified()) {
+                                        mode = Mode::ConfirmQuit;
+                                    } else {
+                                        return Ok(());
+                                    }
+                                }
+                                Some(_) | None => {
+                                    let _ = write!(status_msg, "unknown command: {tok}");
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+                Mode::Picker => {
+                    let p = picker_state.as_mut().expect("picker mode without picker");
+                    match k {
+                        Key::Esc => {
+                            picker_state = None;
+                            mode = Mode::Edit;
+                        }
+                        Key::Char(c) => {
+                            p.filter.push(c);
+                            p.filter_changed();
+                        }
+                        Key::Backspace => {
+                            p.filter.pop();
+                            p.filter_changed();
+                        }
+                        Key::Up => p.sel = p.sel.saturating_sub(1),
+                        Key::Down => p.sel = (p.sel + 1).min(p.entries.len().saturating_sub(1)),
+                        Key::Enter => {
+                            if let Some(path) = p.activate() {
+                                match Buffer::open(&path) {
+                                    Ok(b) => {
+                                        search_job = None;
+                                        replace_job = None;
+                                        confirm_match = None;
+                                        buffers.push(b);
+                                        active = buffers.len() - 1;
+                                        if let (Some(w), Some(p)) =
+                                            (watcher.as_mut(), buffers[active].path.clone())
+                                        {
+                                            let _ = w.watch(active as u64, &p);
+                                        }
+                                        picker_state = None;
+                                        mode = Mode::Edit;
+                                    }
+                                    Err(e) => {
+                                        let _ = write!(status_msg, "{}: {e}", path.display());
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
                 Mode::Edit => {}
             }
             // any manual key cancels an in-flight search (spec: cancellable)
@@ -434,6 +700,18 @@ fn run(buffers: &mut [Buffer]) -> std::io::Result<()> {
                     last_edit_kind = KIND_NONE;
                     prompt.clear();
                     mode = Mode::Prompt(PromptKind::Find);
+                }
+                Key::Ctrl(b'P') => {
+                    last_edit_kind = KIND_NONE;
+                    prompt.clear();
+                    palette_sel = 0;
+                    mode = Mode::Palette;
+                }
+                Key::Ctrl(b'O') => {
+                    last_edit_kind = KIND_NONE;
+                    picker_state = Some(picker::Picker::new(root.to_path_buf()));
+                    pick_top = 0;
+                    mode = Mode::Picker;
                 }
                 Key::Ctrl(b'G') => {
                     last_edit_kind = KIND_NONE;
@@ -594,6 +872,9 @@ fn run(buffers: &mut [Buffer]) -> std::io::Result<()> {
                     }
                 }
                 dirty = true;
+            } else if picker_state.as_ref().is_some_and(|p| p.wants_step()) {
+                picker_state.as_mut().unwrap().step(64);
+                dirty = true;
             } else if buffers[active].index_build.is_some() {
                 buffers[active].step_index_build(4 * 1024 * 1024, &mut job_scratch);
                 dirty = true;
@@ -636,6 +917,59 @@ fn run(buffers: &mut [Buffer]) -> std::io::Result<()> {
                 Mode::ReplaceConfirm if confirm_match.is_some() => {
                     status_left.clear();
                     status_left.push_str(" Replace? y: yes  n: skip  a: all  Esc: stop");
+                }
+                Mode::Palette => {
+                    status_left.clear();
+                    let _ = write!(status_left, " > {prompt}");
+                    let tok = prompt.split_whitespace().next().unwrap_or("");
+                    let matches: Vec<_> = COMMANDS
+                        .iter()
+                        .copied()
+                        .filter(|(name, _)| prompt.is_empty() || name.starts_with(tok))
+                        .collect();
+                    if !matches.is_empty() {
+                        palette_sel = palette_sel.min(matches.len() - 1);
+                    }
+                    let shown = matches.len().min(8).min(editor_rows as usize);
+                    let base = editor_rows as usize - shown;
+                    for (i, (name, usage)) in matches.iter().take(shown).enumerate() {
+                        let row = &mut row_store[base + i];
+                        row.clear();
+                        // ponytail: command palette paints are not a hot path.
+                        row.extend_from_slice(format!("{name}  — {usage}").as_bytes());
+                        row_sel[base + i] =
+                            if i == palette_sel { Some((0, row.len())) } else { None };
+                    }
+                }
+                Mode::Picker => {
+                    let p = picker_state.as_ref().unwrap();
+                    status_left.clear();
+                    let _ = write!(status_left, " pick: {}", p.filter);
+                    if p.wants_step() {
+                        status_left.push_str("  (searching…)");
+                    }
+                    status_right.clear();
+                    let _ = write!(status_right, "{} entries  Esc cancel ", p.entries.len());
+                    if p.sel < pick_top {
+                        pick_top = p.sel;
+                    }
+                    if p.sel >= pick_top + editor_rows as usize {
+                        pick_top = p.sel + 1 - editor_rows as usize;
+                    }
+                    for i in 0..editor_rows as usize {
+                        row_store[i].clear();
+                        row_sel[i] = None;
+                        if let Some(e) = p.entries.get(pick_top + i) {
+                            row_store[i].extend(std::iter::repeat(b' ').take(2 * e.depth));
+                            row_store[i].extend_from_slice(e.name.as_bytes());
+                            if e.is_dir {
+                                row_store[i].push(b'/');
+                            }
+                            if pick_top + i == p.sel {
+                                row_sel[i] = Some((0, row_store[i].len()));
+                            }
+                        }
+                    }
                 }
                 _ => {
                     if let Some(s) = &search_job {

@@ -45,7 +45,7 @@ exit checks, delegation, budget. Update checkboxes as stages land.
   kqueue/inotify watchers, follow mode, clean auto-reload, dirty-change
   notice, mtime/size save guard, advisory lock, file ops.
   *Exit:* external edit auto-reloads a clean buffer; follow tails a log.
-- [ ] **S6 — palette / picker**
+- [x] **S6 — palette / picker**
   Command palette with typed args, lazy tree picker, expand-on-search,
   root `.gitignore` subset, global ignore globs.
   *Exit:* open a nested file via picker in a repo; ignores respected.
