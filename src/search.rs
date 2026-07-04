@@ -21,13 +21,22 @@ pub struct Search {
 
 impl Search {
     pub fn new(needle: Vec<u8>, from: u64) -> Self {
-        Search { needle, pos: from, origin: from, wrapped: false, wrap: true }
+        Search {
+            needle,
+            pos: from,
+            origin: from,
+            wrapped: false,
+            wrap: true,
+        }
     }
 
     /// Forward-only search: replace flows must never wrap back into
     /// already-processed (or out-of-scope) bytes.
     pub fn new_no_wrap(needle: Vec<u8>, from: u64) -> Self {
-        Search { wrap: false, ..Search::new(needle, from) }
+        Search {
+            wrap: false,
+            ..Search::new(needle, from)
+        }
     }
 
     pub fn pos(&self) -> u64 {
@@ -39,7 +48,11 @@ impl Search {
         if len == 0 {
             return 100;
         }
-        let scanned = if self.wrapped { len - self.origin + self.pos } else { self.pos - self.origin };
+        let scanned = if self.wrapped {
+            len - self.origin + self.pos
+        } else {
+            self.pos - self.origin
+        };
         scanned * 100 / len
     }
 
@@ -52,7 +65,11 @@ impl Search {
         let n = self.needle.len() as u64;
         let mut spent = 0u64;
         while spent < budget {
-            let limit = if self.wrapped { self.origin + n - 1 } else { len };
+            let limit = if self.wrapped {
+                self.origin + n - 1
+            } else {
+                len
+            };
             if self.pos >= limit {
                 if self.wrapped || !self.wrap {
                     return Step::NotFound;
@@ -66,7 +83,9 @@ impl Search {
             }
             let slice = (64 * 1024).min(budget - spent).max(n);
             // overlap by needle-1 so matches straddling slices are seen
-            let want = (slice + n - 1).min(limit.saturating_sub(self.pos)).min(len - self.pos);
+            let want = (slice + n - 1)
+                .min(limit.saturating_sub(self.pos))
+                .min(len - self.pos);
             if want < n {
                 if self.wrapped || !self.wrap {
                     return Step::NotFound;
@@ -129,7 +148,13 @@ pub struct ReplaceAll {
 
 impl ReplaceAll {
     pub fn new(needle: Vec<u8>, replacement: Vec<u8>, from: u64, end: u64, group: u64) -> Self {
-        ReplaceAll { search: Search::new_no_wrap(needle, from), replacement, end, count: 0, group }
+        ReplaceAll {
+            search: Search::new_no_wrap(needle, from),
+            replacement,
+            end,
+            count: 0,
+            group,
+        }
     }
 
     pub fn progress(&self, len: u64) -> u64 {
@@ -137,7 +162,12 @@ impl ReplaceAll {
     }
 
     /// Replace matches within budget. Returns true when finished.
-    pub fn step(&mut self, buf: &mut Buffer, budget: u64, scratch: &mut Vec<u8>) -> Result<bool, &'static str> {
+    pub fn step(
+        &mut self,
+        buf: &mut Buffer,
+        budget: u64,
+        scratch: &mut Vec<u8>,
+    ) -> Result<bool, &'static str> {
         let mut spent = 0u64;
         while spent < budget {
             if self.search.pos() >= self.end {
@@ -171,7 +201,8 @@ mod tests {
     use std::path::PathBuf;
 
     fn temp(name: &str, data: &[u8]) -> PathBuf {
-        let p = std::env::temp_dir().join(format!("teddy-searchtest-{}-{}", std::process::id(), name));
+        let p =
+            std::env::temp_dir().join(format!("teddy-searchtest-{}-{}", std::process::id(), name));
         std::fs::write(&p, data).unwrap();
         p
     }

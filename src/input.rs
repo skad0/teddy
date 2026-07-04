@@ -43,7 +43,9 @@ pub struct Parser {
 
 impl Parser {
     pub fn new() -> Self {
-        Parser { buf: Vec::with_capacity(64) }
+        Parser {
+            buf: Vec::with_capacity(64),
+        }
     }
 
     pub fn has_pending(&self) -> bool {
@@ -209,7 +211,10 @@ mod tests {
     #[test]
     fn csi_keys() {
         assert_eq!(parse(b"\x1b[A"), vec![Key::Up]);
-        assert_eq!(parse(b"\x1b[B\x1b[C\x1b[D"), vec![Key::Down, Key::Right, Key::Left]);
+        assert_eq!(
+            parse(b"\x1b[B\x1b[C\x1b[D"),
+            vec![Key::Down, Key::Right, Key::Left]
+        );
         assert_eq!(parse(b"\x1b[H\x1b[F"), vec![Key::Home, Key::End]);
         assert_eq!(parse(b"\x1b[1~\x1b[4~"), vec![Key::Home, Key::End]);
         assert_eq!(parse(b"\x1b[3~"), vec![Key::Delete]);

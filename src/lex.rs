@@ -39,10 +39,44 @@ pub struct Span {
 // included; `try` is reserved-but-unused so it's left out — it's not a
 // keyword yet).
 const RUST_KEYWORDS: &[&[u8]] = &[
-    b"as", b"break", b"const", b"continue", b"crate", b"dyn", b"else", b"enum", b"extern",
-    b"false", b"fn", b"for", b"if", b"impl", b"in", b"let", b"loop", b"match", b"mod", b"move",
-    b"mut", b"pub", b"ref", b"return", b"self", b"Self", b"static", b"struct", b"super", b"trait",
-    b"true", b"type", b"unsafe", b"use", b"where", b"while", b"async", b"await",
+    b"as",
+    b"break",
+    b"const",
+    b"continue",
+    b"crate",
+    b"dyn",
+    b"else",
+    b"enum",
+    b"extern",
+    b"false",
+    b"fn",
+    b"for",
+    b"if",
+    b"impl",
+    b"in",
+    b"let",
+    b"loop",
+    b"match",
+    b"mod",
+    b"move",
+    b"mut",
+    b"pub",
+    b"ref",
+    b"return",
+    b"self",
+    b"Self",
+    b"static",
+    b"struct",
+    b"super",
+    b"trait",
+    b"true",
+    b"type",
+    b"unsafe",
+    b"use",
+    b"where",
+    b"while",
+    b"async",
+    b"await",
 ];
 
 fn is_rust_keyword(word: &[u8]) -> bool {
@@ -161,7 +195,11 @@ pub fn lex_rust_line(line: &[u8], out: &mut Vec<Span>) {
         let b = line[i];
         match b {
             b'/' if i + 1 < n && line[i + 1] == b'/' => {
-                out.push(Span { start: i, end: n, tok: Tok::Comment });
+                out.push(Span {
+                    start: i,
+                    end: n,
+                    tok: Tok::Comment,
+                });
                 i = n;
             }
             // ponytail: no nesting tracked, first "*/" wins; unterminated
@@ -173,20 +211,32 @@ pub fn lex_rust_line(line: &[u8], out: &mut Vec<Span>) {
                     j += 1;
                 }
                 let end = if j + 1 < n { j + 2 } else { n };
-                out.push(Span { start, end, tok: Tok::Comment });
+                out.push(Span {
+                    start,
+                    end,
+                    tok: Tok::Comment,
+                });
                 i = end;
             }
             b'"' => {
                 let start = i;
                 let end = scan_dquote(line, i);
-                out.push(Span { start, end, tok: Tok::Str });
+                out.push(Span {
+                    start,
+                    end,
+                    tok: Tok::Str,
+                });
                 i = end;
             }
             b'\'' => {
                 let start = i;
                 if i + 1 < n && line[i + 1] == b'\\' {
                     i = scan_char_lit(line, i);
-                    out.push(Span { start, end: i, tok: Tok::Str });
+                    out.push(Span {
+                        start,
+                        end: i,
+                        tok: Tok::Str,
+                    });
                 } else {
                     let id_start = i + 1;
                     let mut j = id_start;
@@ -196,10 +246,18 @@ pub fn lex_rust_line(line: &[u8], out: &mut Vec<Span>) {
                     let id_len = j - id_start;
                     if id_len == 1 && j < n && line[j] == b'\'' {
                         i = j + 1;
-                        out.push(Span { start, end: i, tok: Tok::Str });
+                        out.push(Span {
+                            start,
+                            end: i,
+                            tok: Tok::Str,
+                        });
                     } else if id_len >= 1 {
                         i = j; // lifetime / loop label
-                        out.push(Span { start, end: i, tok: Tok::Ident });
+                        out.push(Span {
+                            start,
+                            end: i,
+                            tok: Tok::Ident,
+                        });
                     } else if j < n && line[j] >= 0x80 {
                         // non-ASCII char literal, e.g. 'é' — best effort,
                         // never split the multi-byte char across spans.
@@ -207,14 +265,26 @@ pub fn lex_rust_line(line: &[u8], out: &mut Vec<Span>) {
                         let close = j + w;
                         if close < n && line[close] == b'\'' {
                             i = close + 1;
-                            out.push(Span { start, end: i, tok: Tok::Str });
+                            out.push(Span {
+                                start,
+                                end: i,
+                                tok: Tok::Str,
+                            });
                         } else {
                             i += 1;
-                            out.push(Span { start, end: i, tok: Tok::Punct });
+                            out.push(Span {
+                                start,
+                                end: i,
+                                tok: Tok::Punct,
+                            });
                         }
                     } else {
                         i += 1;
-                        out.push(Span { start, end: i, tok: Tok::Punct });
+                        out.push(Span {
+                            start,
+                            end: i,
+                            tok: Tok::Punct,
+                        });
                     }
                 }
             }
@@ -262,7 +332,11 @@ pub fn lex_rust_line(line: &[u8], out: &mut Vec<Span>) {
                 while i < n && (line[i].is_ascii_alphanumeric() || line[i] == b'_') {
                     i += 1;
                 }
-                out.push(Span { start, end: i, tok: Tok::Number });
+                out.push(Span {
+                    start,
+                    end: i,
+                    tok: Tok::Number,
+                });
             }
             b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
                 let start = i;
@@ -270,24 +344,41 @@ pub fn lex_rust_line(line: &[u8], out: &mut Vec<Span>) {
                     i += 1;
                 }
                 let word = &line[start..i];
-                if (word == b"r" || word == b"br") && i < n && (line[i] == b'"' || line[i] == b'#') {
+                if (word == b"r" || word == b"br") && i < n && (line[i] == b'"' || line[i] == b'#')
+                {
                     if let Some(end) = try_raw_string(line, i) {
-                        out.push(Span { start, end, tok: Tok::Str });
+                        out.push(Span {
+                            start,
+                            end,
+                            tok: Tok::Str,
+                        });
                         i = end;
                         continue;
                     }
                 }
                 if word == b"b" && i < n && line[i] == b'"' {
                     i = scan_dquote(line, i);
-                    out.push(Span { start, end: i, tok: Tok::Str });
+                    out.push(Span {
+                        start,
+                        end: i,
+                        tok: Tok::Str,
+                    });
                     continue;
                 }
                 if word == b"b" && i < n && line[i] == b'\'' {
                     i = scan_char_lit(line, i);
-                    out.push(Span { start, end: i, tok: Tok::Str });
+                    out.push(Span {
+                        start,
+                        end: i,
+                        tok: Tok::Str,
+                    });
                     continue;
                 }
-                let tok = if is_rust_keyword(word) { Tok::Keyword } else { Tok::Ident };
+                let tok = if is_rust_keyword(word) {
+                    Tok::Keyword
+                } else {
+                    Tok::Ident
+                };
                 out.push(Span { start, end: i, tok });
             }
             _ if b < 0x80 && !b.is_ascii_whitespace() => {
@@ -308,7 +399,11 @@ pub fn lex_rust_line(line: &[u8], out: &mut Vec<Span>) {
                         break;
                     }
                 }
-                out.push(Span { start, end: i, tok: Tok::Punct });
+                out.push(Span {
+                    start,
+                    end: i,
+                    tok: Tok::Punct,
+                });
             }
             _ => {
                 // ASCII whitespace or a non-ASCII byte (unicode identifiers,
@@ -367,7 +462,11 @@ pub fn lex_markdown_line(line: &[u8], out: &mut Vec<Span>) {
         h += 1;
     }
     if h > lead && (h == n || line[h] == b' ') {
-        out.push(Span { start: 0, end: n, tok: Tok::Heading });
+        out.push(Span {
+            start: 0,
+            end: n,
+            tok: Tok::Heading,
+        });
         return;
     }
 
@@ -379,7 +478,11 @@ pub fn lex_markdown_line(line: &[u8], out: &mut Vec<Span>) {
         f += 1;
     }
     if f - lead >= 3 {
-        out.push(Span { start: 0, end: n, tok: Tok::CodeSpan });
+        out.push(Span {
+            start: 0,
+            end: n,
+            tok: Tok::CodeSpan,
+        });
         return;
     }
 
@@ -388,7 +491,11 @@ pub fn lex_markdown_line(line: &[u8], out: &mut Vec<Span>) {
         match line[i] {
             b'`' => {
                 if let Some(close) = find_byte(line, i + 1, b'`') {
-                    out.push(Span { start: i, end: close + 1, tok: Tok::CodeSpan });
+                    out.push(Span {
+                        start: i,
+                        end: close + 1,
+                        tok: Tok::CodeSpan,
+                    });
                     i = close + 1;
                 } else {
                     i += 1;
@@ -401,13 +508,21 @@ pub fn lex_markdown_line(line: &[u8], out: &mut Vec<Span>) {
                 }
                 if run >= 2 {
                     if let Some(close) = find_run(line, i + run, b'*', 2) {
-                        out.push(Span { start: i, end: close + 2, tok: Tok::Emphasis });
+                        out.push(Span {
+                            start: i,
+                            end: close + 2,
+                            tok: Tok::Emphasis,
+                        });
                         i = close + 2;
                     } else {
                         i += run;
                     }
                 } else if let Some(close) = find_byte(line, i + 1, b'*') {
-                    out.push(Span { start: i, end: close + 1, tok: Tok::Emphasis });
+                    out.push(Span {
+                        start: i,
+                        end: close + 1,
+                        tok: Tok::Emphasis,
+                    });
                     i = close + 1;
                 } else {
                     i += 1;
@@ -418,7 +533,11 @@ pub fn lex_markdown_line(line: &[u8], out: &mut Vec<Span>) {
                 if let Some(rb) = find_byte(line, i + 1, b']') {
                     if rb + 1 < n && line[rb + 1] == b'(' {
                         if let Some(rp) = find_byte(line, rb + 2, b')') {
-                            out.push(Span { start: i, end: rp + 1, tok: Tok::Link });
+                            out.push(Span {
+                                start: i,
+                                end: rp + 1,
+                                tok: Tok::Link,
+                            });
                             i = rp + 1;
                             matched = true;
                         }
@@ -693,7 +812,10 @@ mod tests {
         let spans = mtoks(line);
         let e = spans.iter().find(|s| text_at(line, s) == "*emph*").unwrap();
         assert_eq!(e.tok, Tok::Emphasis);
-        let s = spans.iter().find(|s| text_at(line, s) == "**strong**").unwrap();
+        let s = spans
+            .iter()
+            .find(|s| text_at(line, s) == "**strong**")
+            .unwrap();
         assert_eq!(s.tok, Tok::Emphasis);
     }
 

@@ -104,7 +104,11 @@ pub struct AddStore {
 
 impl AddStore {
     pub fn new() -> Self {
-        AddStore { mem: Vec::new(), spill: None, spill_len: 0 }
+        AddStore {
+            mem: Vec::new(),
+            spill: None,
+            spill_len: 0,
+        }
     }
 
     /// Store bytes, returning the piece source + start for them.
@@ -115,9 +119,16 @@ impl AddStore {
             return Ok((Src::AddMem, start));
         }
         if self.spill.is_none() {
-            let path = std::env::temp_dir()
-                .join(format!("teddy-spill-{}-{:x}", std::process::id(), self as *const _ as usize));
-            let f = File::options().read(true).write(true).create_new(true).open(&path)?;
+            let path = std::env::temp_dir().join(format!(
+                "teddy-spill-{}-{:x}",
+                std::process::id(),
+                self as *const _ as usize
+            ));
+            let f = File::options()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(&path)?;
             let _ = std::fs::remove_file(&path); // unlink-while-open: auto-cleanup
             self.spill = Some(f);
         }
@@ -137,7 +148,11 @@ impl AddStore {
             Src::AddSpill => {
                 let at = out.len();
                 out.resize(at + len as usize, 0);
-                read_exact_at(self.spill.as_ref().expect("spill piece without spill file"), &mut out[at..], start)
+                read_exact_at(
+                    self.spill.as_ref().expect("spill piece without spill file"),
+                    &mut out[at..],
+                    start,
+                )
             }
             Src::Orig => unreachable!("orig bytes live in OriginalFile"),
         }
@@ -178,9 +193,19 @@ impl PieceChain {
         let groups = if len == 0 {
             Vec::new()
         } else {
-            vec![PieceGroup { pieces: vec![Piece { src: Src::Orig, start: 0, len }], bytes: len }]
+            vec![PieceGroup {
+                pieces: vec![Piece {
+                    src: Src::Orig,
+                    start: 0,
+                    len,
+                }],
+                bytes: len,
+            }]
         };
-        PieceChain { groups, total_len: len }
+        PieceChain {
+            groups,
+            total_len: len,
+        }
     }
 
     /// Replace byte range [start, end) with `new`, returning the exact
@@ -228,19 +253,31 @@ impl PieceChain {
             // part before the range
             if pos < flat_start {
                 let keep = (flat_start - pos).min(p.len);
-                rebuilt.push(Piece { src: p.src, start: p.start, len: keep });
+                rebuilt.push(Piece {
+                    src: p.src,
+                    start: p.start,
+                    len: keep,
+                });
             }
             // part inside the range
             let cut_lo = flat_start.max(pos);
             let cut_hi = flat_end.min(p_end);
             if cut_lo < cut_hi {
-                removed.push(Piece { src: p.src, start: p.start + (cut_lo - pos), len: cut_hi - cut_lo });
+                removed.push(Piece {
+                    src: p.src,
+                    start: p.start + (cut_lo - pos),
+                    len: cut_hi - cut_lo,
+                });
             }
             // part after the range
             if p_end > flat_end {
                 let tail = (p_end - flat_end).min(p.len);
                 let skip = p.len - tail;
-                rebuilt.push(Piece { src: p.src, start: p.start + skip, len: tail });
+                rebuilt.push(Piece {
+                    src: p.src,
+                    start: p.start + skip,
+                    len: tail,
+                });
             }
             pos = p_end;
         }
@@ -265,7 +302,10 @@ impl PieceChain {
         // repack into groups of ≤ PIECES_PER_CHUNK
         let mut packed: Vec<PieceGroup> = rebuilt
             .chunks(PIECES_PER_CHUNK)
-            .map(|c| PieceGroup { pieces: c.to_vec(), bytes: c.iter().map(|p| p.len).sum() })
+            .map(|c| PieceGroup {
+                pieces: c.to_vec(),
+                bytes: c.iter().map(|p| p.len).sum(),
+            })
             .collect();
         if self.groups.is_empty() {
             self.groups = packed;
@@ -356,20 +396,30 @@ mod tests {
                 Vec::new()
             } else {
                 let (src, s) = self.adds.push(bytes).unwrap();
-                vec![Piece { src, start: s, len: bytes.len() as u64 }]
+                vec![Piece {
+                    src,
+                    start: s,
+                    len: bytes.len() as u64,
+                }]
             };
             let removed = self.chain.replace(start, end, &new);
-            self.mirror.splice(start as usize..end as usize, bytes.iter().copied());
+            self.mirror
+                .splice(start as usize..end as usize, bytes.iter().copied());
             removed
         }
 
         fn contents(&self) -> Vec<u8> {
             let mut out = Vec::new();
-            self.chain.for_range(0, self.chain.total_len, |p, off, len| match p.src {
-                Src::Orig => out
-                    .extend_from_slice(&self.orig[(p.start + off) as usize..(p.start + off + len) as usize]),
-                _ => self.adds.read_into(p.src, p.start + off, len, &mut out).unwrap(),
-            });
+            self.chain
+                .for_range(0, self.chain.total_len, |p, off, len| match p.src {
+                    Src::Orig => out.extend_from_slice(
+                        &self.orig[(p.start + off) as usize..(p.start + off + len) as usize],
+                    ),
+                    _ => self
+                        .adds
+                        .read_into(p.src, p.start + off, len, &mut out)
+                        .unwrap(),
+                });
             out
         }
 
@@ -443,7 +493,9 @@ mod tests {
         // ponytail: tiny deterministic LCG instead of a rand dep
         let mut seed = 0xdeadbeefu64;
         let mut rnd = move || {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (seed >> 33) as usize
         };
         let mut m = Model::new(b"the quick brown fox jumps over the lazy dog");

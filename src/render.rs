@@ -17,7 +17,9 @@ pub struct FrameBuf {
 
 impl FrameBuf {
     pub fn new() -> Self {
-        FrameBuf { bytes: Vec::with_capacity(64 * 1024) }
+        FrameBuf {
+            bytes: Vec::with_capacity(64 * 1024),
+        }
     }
 
     pub fn as_bytes(&self) -> &[u8] {
@@ -60,7 +62,12 @@ pub struct RenderCache {
 
 impl RenderCache {
     pub fn new() -> Self {
-        RenderCache { size: (0, 0), tab_hash: 0, status_hash: 0, row_hashes: Vec::new() }
+        RenderCache {
+            size: (0, 0),
+            tab_hash: 0,
+            status_hash: 0,
+            row_hashes: Vec::new(),
+        }
     }
 }
 
@@ -93,8 +100,8 @@ pub struct View<'a> {
 /// One display token decoded from a byte stream.
 /// (bytes consumed, cell width, what to emit)
 enum Token {
-    Char(usize, usize),  // consumed, width (chars/tabs emit source or spaces)
-    Escape(u8),          // one invalid/control byte -> "\xNN"
+    Char(usize, usize), // consumed, width (chars/tabs emit source or spaces)
+    Escape(u8),         // one invalid/control byte -> "\xNN"
 }
 
 fn next_token(bytes: &[u8], cell: usize) -> Token {
@@ -113,7 +120,11 @@ fn next_token(bytes: &[u8], cell: usize) -> Token {
             match std::str::from_utf8(bytes.get(..len).unwrap_or(&[])) {
                 // C1 controls (U+0080..U+009F, e.g. CSI) are as dangerous as
                 // C0: escape their bytes, never emit them raw
-                Ok(s) if s.chars().next().is_some_and(|c| ('\u{80}'..='\u{9f}').contains(&c)) => {
+                Ok(s)
+                    if s.chars()
+                        .next()
+                        .is_some_and(|c| ('\u{80}'..='\u{9f}').contains(&c)) =>
+                {
                     Token::Escape(b)
                 }
                 Ok(_) => Token::Char(len, 1),
@@ -162,7 +173,13 @@ pub fn byte_at_col(bytes: &[u8], goal: usize) -> usize {
 
 /// Emit one editor row: skip `left` cells, render at most `width` cells.
 /// `sel` is a byte span within `bytes` rendered in reverse video.
-fn emit_row(out: &mut Vec<u8>, bytes: &[u8], left: usize, width: usize, sel: Option<(usize, usize)>) {
+fn emit_row(
+    out: &mut Vec<u8>,
+    bytes: &[u8],
+    left: usize,
+    width: usize,
+    sel: Option<(usize, usize)>,
+) {
     let mut cell = 0usize;
     let mut i = 0usize;
     let limit = left + width;
@@ -310,7 +327,12 @@ pub fn paint(f: &mut FrameBuf, cache: &mut RenderCache, v: &View) {
     }
 
     // native cursor: always positioned
-    let _ = write!(b, "\x1b[{};{}H\x1b[?25h", v.cursor_screen.1 + 2, v.cursor_screen.0 + 1);
+    let _ = write!(
+        b,
+        "\x1b[{};{}H\x1b[?25h",
+        v.cursor_screen.1 + 2,
+        v.cursor_screen.0 + 1
+    );
 }
 
 fn truncated(s: &str, max: usize) -> &str {
@@ -443,13 +465,23 @@ mod tests {
         paint(&mut f, &mut cache, &v);
         let s2 = String::from_utf8_lossy(f.as_bytes()).into_owned();
         assert!(!s2.contains("line one"), "{s2:?}");
-        assert!(f.as_bytes().len() < 32, "cache miss: {} vs {first_len}", f.as_bytes().len());
+        assert!(
+            f.as_bytes().len() < 32,
+            "cache miss: {} vs {first_len}",
+            f.as_bytes().len()
+        );
 
         // one row changes: only that row re-emits
         let rows2 = vec![b"line one".to_vec(), b"CHANGED!".to_vec()];
-        let v2 = View { row_bytes: &rows2, ..v };
+        let v2 = View {
+            row_bytes: &rows2,
+            ..v
+        };
         paint(&mut f, &mut cache, &v2);
         let s3 = String::from_utf8_lossy(f.as_bytes()).into_owned();
-        assert!(s3.contains("CHANGED!") && !s3.contains("line one"), "{s3:?}");
+        assert!(
+            s3.contains("CHANGED!") && !s3.contains("line one"),
+            "{s3:?}"
+        );
     }
 }

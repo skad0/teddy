@@ -109,7 +109,10 @@ impl Buffer {
             if len <= SYNC_INDEX_MAX {
                 b.build_line_index()?;
             } else {
-                b.index_build = Some(IndexBuild { pos: 0, newlines: Vec::new() });
+                b.index_build = Some(IndexBuild {
+                    pos: 0,
+                    newlines: Vec::new(),
+                });
             }
         }
         Ok(b)
@@ -187,9 +190,11 @@ impl Buffer {
         });
         for &(src, s, l) in &parts {
             let r = match src {
-                Src::Orig => {
-                    self.original.as_mut().expect("orig piece without file").read_into(s, l, out)
-                }
+                Src::Orig => self
+                    .original
+                    .as_mut()
+                    .expect("orig piece without file")
+                    .read_into(s, l, out),
                 _ => self.adds.read_into(src, s, l, out),
             };
             if r.is_err() {
@@ -241,11 +246,18 @@ impl Buffer {
     /// the new inode. Cursor clamps (EOF in follow mode); the view
     /// rescrolls on the next paint.
     pub fn reload(&mut self) -> io::Result<()> {
-        let path = self.path.clone().ok_or_else(|| io::Error::other("buffer has no file"))?;
+        let path = self
+            .path
+            .clone()
+            .ok_or_else(|| io::Error::other("buffer has no file"))?;
         let mut nb = Buffer::open(&path)?;
         nb.follow = self.follow;
         nb.readonly = nb.readonly || self.follow;
-        nb.cursor = if self.follow { nb.len() } else { self.cursor.min(nb.len()) };
+        nb.cursor = if self.follow {
+            nb.len()
+        } else {
+            self.cursor.min(nb.len())
+        };
         *self = nb;
         Ok(())
     }
@@ -276,7 +288,10 @@ impl Buffer {
     }
 
     pub fn line_of_byte(&self, byte: u64) -> u64 {
-        let ix = self.line_index.as_ref().expect("line_of_byte without index");
+        let ix = self
+            .line_index
+            .as_ref()
+            .expect("line_of_byte without index");
         ix.rank(byte) as u64
     }
 
@@ -284,7 +299,13 @@ impl Buffer {
 
     /// Validated byte-range replacement (spec §7). Single-edit transactions
     /// are the S1/S2 shape; multi-edit arrives with the plugin host.
-    pub fn replace(&mut self, start: u64, end: u64, bytes: &[u8], group: u64) -> Result<(), &'static str> {
+    pub fn replace(
+        &mut self,
+        start: u64,
+        end: u64,
+        bytes: &[u8],
+        group: u64,
+    ) -> Result<(), &'static str> {
         if self.readonly {
             return Err("buffer is read-only");
         }
@@ -294,8 +315,15 @@ impl Buffer {
         let new: Vec<Piece> = if bytes.is_empty() {
             Vec::new()
         } else {
-            let (src, s) = self.adds.push(bytes).map_err(|_| "add store write failed")?;
-            vec![Piece { src, start: s, len: bytes.len() as u64 }]
+            let (src, s) = self
+                .adds
+                .push(bytes)
+                .map_err(|_| "add store write failed")?;
+            vec![Piece {
+                src,
+                start: s,
+                len: bytes.len() as u64,
+            }]
         };
         let cursor_before = self.cursor;
         let removed = self.chain.replace(start, end, &new);
@@ -321,14 +349,19 @@ impl Buffer {
         if self.index_build.is_some() {
             // ponytail: an edit invalidates the partial scan; restart —
             // build slices are fast and edits-during-open are rare
-            self.index_build = Some(IndexBuild { pos: 0, newlines: Vec::new() });
+            self.index_build = Some(IndexBuild {
+                pos: 0,
+                newlines: Vec::new(),
+            });
         }
         Ok(())
     }
 
     /// Advance the cooperative index build. Returns true when finished.
     pub fn step_index_build(&mut self, budget: u64, scratch: &mut Vec<u8>) -> bool {
-        let Some(mut ib) = self.index_build.take() else { return true };
+        let Some(mut ib) = self.index_build.take() else {
+            return true;
+        };
         let len = self.len();
         let mut spent = 0u64;
         while spent < budget && ib.pos < len {
@@ -385,7 +418,9 @@ impl Buffer {
             if undo {
                 self.undo_bytes -= e.byte_cost;
             }
-            let removed = self.chain.replace(e.start, e.start + e.new_len, &e.old_pieces);
+            let removed = self
+                .chain
+                .replace(e.start, e.start + e.new_len, &e.old_pieces);
             self.reindex_piece_replace(e.start, e.start + e.new_len, e.old_len);
             let inverse = UndoEntry {
                 start: e.start,
@@ -410,7 +445,10 @@ impl Buffer {
         }
         if self.index_build.is_some() {
             // undo/redo mutates content like any edit: restart the scan
-            self.index_build = Some(IndexBuild { pos: 0, newlines: Vec::new() });
+            self.index_build = Some(IndexBuild {
+                pos: 0,
+                newlines: Vec::new(),
+            });
         }
         self.sel_anchor = None;
         true
@@ -440,7 +478,10 @@ impl Buffer {
     /// reading correct bytes after rename.
     pub fn save(&mut self, force: bool) -> io::Result<()> {
         use std::io::Write as _;
-        let path = self.path.clone().ok_or_else(|| io::Error::other("buffer has no filename"))?;
+        let path = self
+            .path
+            .clone()
+            .ok_or_else(|| io::Error::other("buffer has no filename"))?;
         // spec §9.1: symlinks followed — write through to the target so a
         // rename never replaces the symlink itself
         let path = std::fs::canonicalize(&path).unwrap_or(path);
@@ -451,15 +492,29 @@ impl Buffer {
                 }
             }
         }
-        let dir = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+        let dir = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
         let (tmp, mut f) = {
             let mut attempt = 0u32;
             loop {
-                let cand = dir.join(format!(".{}.teddy-{}-{}", self.name, std::process::id(), attempt));
+                let cand = dir.join(format!(
+                    ".{}.teddy-{}-{}",
+                    self.name,
+                    std::process::id(),
+                    attempt
+                ));
                 // create_new: never truncate a file someone else placed here
-                match std::fs::File::options().write(true).create_new(true).open(&cand) {
+                match std::fs::File::options()
+                    .write(true)
+                    .create_new(true)
+                    .open(&cand)
+                {
                     Ok(f) => break (cand, f),
-                    Err(e) if e.kind() == io::ErrorKind::AlreadyExists && attempt < 16 => attempt += 1,
+                    Err(e) if e.kind() == io::ErrorKind::AlreadyExists && attempt < 16 => {
+                        attempt += 1
+                    }
                     Err(e) => return Err(e),
                 }
             }
@@ -515,8 +570,8 @@ impl Buffer {
         self.undo_bytes += e.byte_cost;
         self.undo.push(e);
         const UNDO_CAP: usize = 8 * 1024 * 1024; // spec §8: fixed byte cap
-        // evict whole groups: dropping half a group would leave undo_group
-        // restoring a corrupted intermediate state
+                                                 // evict whole groups: dropping half a group would leave undo_group
+                                                 // restoring a corrupted intermediate state
         while self.undo_bytes > UNDO_CAP && self.undo.len() > 1 {
             let victim_group = self.undo[0].group;
             while self.undo.len() > 1 && self.undo[0].group == victim_group {
@@ -527,7 +582,9 @@ impl Buffer {
     }
 
     fn patch_line_index(&mut self, start: u64, end: u64, inserted: &[u8]) {
-        let Some(ix) = self.line_index.as_mut() else { return };
+        let Some(ix) = self.line_index.as_mut() else {
+            return;
+        };
         let delta = inserted.len() as i64 - (end - start) as i64;
         let fresh: Vec<u64> = inserted
             .iter()
@@ -560,9 +617,12 @@ impl Buffer {
         let w = self.probe(pos, 4.min(self.len() - pos));
         let step = match std::str::from_utf8(&w) {
             Ok(s) => s.chars().next().map_or(1, |c| c.len_utf8()),
-            Err(e) if e.valid_up_to() > 0 => {
-                std::str::from_utf8(&w[..e.valid_up_to()]).unwrap().chars().next().unwrap().len_utf8()
-            }
+            Err(e) if e.valid_up_to() > 0 => std::str::from_utf8(&w[..e.valid_up_to()])
+                .unwrap()
+                .chars()
+                .next()
+                .unwrap()
+                .len_utf8(),
             Err(_) => 1,
         };
         self.probe_done(w);
@@ -705,12 +765,17 @@ mod tests {
 
     #[test]
     fn undo_redo_invertibility_randomized() {
-        let p = temp("undo", b"the quick brown fox jumps over the lazy dog\nsecond line\n");
+        let p = temp(
+            "undo",
+            b"the quick brown fox jumps over the lazy dog\nsecond line\n",
+        );
         let mut b = Buffer::open(&p).unwrap();
         let initial = contents(&mut b);
         let mut seed = 0x12345u64;
         let mut rnd = move |m: usize| {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (seed >> 33) as usize % m
         };
         let mut snapshots = vec![initial.clone()];
@@ -718,7 +783,9 @@ mod tests {
             let len = b.len() as usize;
             let a = rnd(len + 1);
             let e = (a + rnd(6)).min(len);
-            let ins: Vec<u8> = (0..rnd(5)).map(|i| b'a' + ((i + g as usize) % 26) as u8).collect();
+            let ins: Vec<u8> = (0..rnd(5))
+                .map(|i| b'a' + ((i + g as usize) % 26) as u8)
+                .collect();
             b.replace(a as u64, e as u64, &ins, g).unwrap();
             snapshots.push(contents(&mut b));
         }
@@ -759,7 +826,10 @@ mod tests {
 
     #[test]
     fn save_round_trip_byte_identical() {
-        let data: Vec<u8> = (0..100_000u32).map(|i| (i % 256) as u8).map(|b| if b == b'\0' { b'x' } else { b }).collect();
+        let data: Vec<u8> = (0..100_000u32)
+            .map(|i| (i % 256) as u8)
+            .map(|b| if b == b'\0' { b'x' } else { b })
+            .collect();
         let p = temp("roundtrip", &data);
         let mut b = Buffer::open(&p).unwrap();
         b.replace(500, 600, b"REPLACED", 1).unwrap();

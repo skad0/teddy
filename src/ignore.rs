@@ -49,7 +49,12 @@ impl IgnoreRules {
                 } else {
                     vec![rest.to_string()]
                 };
-                Some(Pattern { negate, dir_only, anchored, parts })
+                Some(Pattern {
+                    negate,
+                    dir_only,
+                    anchored,
+                    parts,
+                })
             })
             .collect();
         IgnoreRules { patterns }

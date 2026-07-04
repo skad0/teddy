@@ -82,8 +82,10 @@ impl Picker {
                 Some((path, is_dir))
             })
             .collect();
-        v.sort_by(|a, b| (!a.1, a.0.file_name().map(|n| n.to_owned()))
-            .cmp(&(!b.1, b.0.file_name().map(|n| n.to_owned()))));
+        v.sort_by(|a, b| {
+            (!a.1, a.0.file_name().map(|n| n.to_owned()))
+                .cmp(&(!b.1, b.0.file_name().map(|n| n.to_owned())))
+        });
         v
     }
 
@@ -111,7 +113,12 @@ impl Picker {
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
             let expanded = is_dir && self.expanded.contains(&path);
-            self.entries.push(Entry { path: path.clone(), depth, is_dir, name });
+            self.entries.push(Entry {
+                path: path.clone(),
+                depth,
+                is_dir,
+                name,
+            });
             if expanded {
                 self.push_tree(&path, depth + 1);
             }
@@ -131,14 +138,23 @@ impl Picker {
     /// One cooperative expand-on-search slice: visit up to `dirs` directories,
     /// appending matches to `entries`. Returns true when the walk finished.
     pub fn step(&mut self, dirs: usize) -> bool {
-        let Some(mut w) = self.walk.take() else { return true };
+        let Some(mut w) = self.walk.take() else {
+            return true;
+        };
         let needle = self.filter.to_lowercase();
         for _ in 0..dirs {
-            let Some((dir, depth)) = w.queue.pop_front() else { break };
+            let Some((dir, depth)) = w.queue.pop_front() else {
+                break;
+            };
             for (path, is_dir) in self.list_dir(&dir) {
                 let rel = self.rel(&path);
                 if rel.to_lowercase().contains(&needle) {
-                    self.entries.push(Entry { path: path.clone(), depth: 0, is_dir, name: rel });
+                    self.entries.push(Entry {
+                        path: path.clone(),
+                        depth: 0,
+                        is_dir,
+                        name: rel,
+                    });
                 }
                 if is_dir && w.visited < WALK_CAP {
                     w.visited += 1;
@@ -175,8 +191,7 @@ mod tests {
     use super::*;
 
     fn tree(name: &str) -> PathBuf {
-        let root =
-            std::env::temp_dir().join(format!("teddy-picker-{}-{name}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("teddy-picker-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("sub/deep")).unwrap();
         std::fs::create_dir_all(root.join(".git")).unwrap();
@@ -194,7 +209,11 @@ mod tests {
         let root = tree("tree");
         let mut p = Picker::new(root.clone());
         let names: Vec<&str> = p.entries.iter().map(|e| e.name.as_str()).collect();
-        assert_eq!(names, [ "sub", ".gitignore", "a.txt"], "dirs first, .git ignored");
+        assert_eq!(
+            names,
+            ["sub", ".gitignore", "a.txt"],
+            "dirs first, .git ignored"
+        );
         // expand sub: b.txt appears, c.log stays ignored, deep not read yet
         p.sel = 0;
         assert!(p.activate().is_none());

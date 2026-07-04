@@ -30,9 +30,16 @@ impl LineIndex {
         let count = v.len();
         let blocks = v
             .chunks(BLOCK)
-            .map(|c| Block { raw: c.to_vec(), delta: 0 })
+            .map(|c| Block {
+                raw: c.to_vec(),
+                delta: 0,
+            })
             .collect();
-        LineIndex { blocks, count, complete: true }
+        LineIndex {
+            blocks,
+            count,
+            complete: true,
+        }
     }
 
     pub fn count(&self) -> usize {
@@ -64,10 +71,14 @@ impl LineIndex {
         let mut base = 0usize;
         for b in &self.blocks {
             if byte <= b.first() {
-                return base + b.raw.partition_point(|&r| ((r as i64 + b.delta) as u64) < byte);
+                return base
+                    + b.raw
+                        .partition_point(|&r| ((r as i64 + b.delta) as u64) < byte);
             }
             if byte <= b.last() {
-                return base + b.raw.partition_point(|&r| ((r as i64 + b.delta) as u64) < byte);
+                return base
+                    + b.raw
+                        .partition_point(|&r| ((r as i64 + b.delta) as u64) < byte);
             }
             base += b.raw.len();
         }
@@ -107,7 +118,10 @@ impl LineIndex {
         }
         let new_blocks: Vec<Block> = rebuilt
             .chunks(BLOCK)
-            .map(|c| Block { raw: c.to_vec(), delta: 0 })
+            .map(|c| Block {
+                raw: c.to_vec(),
+                delta: 0,
+            })
             .collect();
         self.blocks.splice(bi..bj, new_blocks);
         self.blocks.retain(|b| !b.raw.is_empty());
@@ -138,8 +152,14 @@ mod tests {
     fn matches_flat_model_randomized() {
         let mut seed = 0xabcdefu64;
         let mut rnd = move |m: u64| {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-            if m == 0 { 0 } else { (seed >> 33) % m }
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            if m == 0 {
+                0
+            } else {
+                (seed >> 33) % m
+            }
         };
         // start with newlines every ~10 bytes over 1 MB (100k lines,
         // several blocks)
@@ -167,7 +187,11 @@ mod tests {
         assert_eq!(ix.to_vec(), flat);
         // rank agrees at boundaries
         for probe in [0u64, 5, 9_999, 500_000, file_len] {
-            assert_eq!(ix.rank(probe), flat.partition_point(|&n| n < probe), "probe {probe}");
+            assert_eq!(
+                ix.rank(probe),
+                flat.partition_point(|&n| n < probe),
+                "probe {probe}"
+            );
         }
     }
 
