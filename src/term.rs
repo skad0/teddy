@@ -56,17 +56,29 @@ pub fn size() -> (u16, u16) {
     }
 }
 
-/// Poll stdin for readability. Returns true if input is ready.
-pub fn poll_stdin(timeout_ms: u64) -> io::Result<bool> {
+/// Poll stdin (and an optional watcher fd) for readability.
+/// Returns (stdin_ready, watch_ready).
+pub fn poll_stdin(
+    watch: Option<std::os::fd::BorrowedFd>,
+    timeout_ms: u64,
+) -> io::Result<(bool, bool)> {
     let ts = Timespec {
         tv_sec: (timeout_ms / 1000) as _,
         tv_nsec: ((timeout_ms % 1000) * 1_000_000) as _,
     };
     let stdin = rustix::stdio::stdin();
-    let mut fds = [PollFd::new(&stdin, PollFlags::IN)];
+    let mut fds = [
+        PollFd::new(&stdin, PollFlags::IN),
+        // absent watcher: poll stdin twice; the dup slot is inert
+        PollFd::new(watch.as_ref().unwrap_or(&stdin), PollFlags::IN),
+    ];
     match rustix::event::poll(&mut fds, Some(&ts)) {
-        Ok(n) => Ok(n > 0),
-        Err(rustix::io::Errno::INTR) => Ok(false), // e.g. SIGWINCH; size is re-checked each tick
+        // HUP/ERR also count as ready: the read path owns EOF/errors
+        Ok(_) => Ok((
+            !fds[0].revents().is_empty(),
+            watch.is_some() && !fds[1].revents().is_empty(),
+        )),
+        Err(rustix::io::Errno::INTR) => Ok((false, false)), // e.g. SIGWINCH; size is re-checked each tick
         Err(e) => Err(e.into()),
     }
 }

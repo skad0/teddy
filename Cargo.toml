@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 # spec §3: minimal rustix-style Unix syscall access is the one allowed category
-rustix = { version = "1", default-features = false, features = ["termios", "event", "stdio", "std"] }
+rustix = { version = "1", default-features = false, features = ["termios", "event", "stdio", "std", "fs"] }
 
 [profile.release]
 opt-level = "z"

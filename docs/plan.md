@@ -41,7 +41,7 @@ exit checks, delegation, budget. Update checkboxes as stages land.
   table, scroll-region optimization.
   *Exit:* dev-build instrumentation shows zero per-keypress allocation
   and sub-ms input→frame time on a large file.
-- [ ] **S5 — filesystem**
+- [x] **S5 — filesystem**
   kqueue/inotify watchers, follow mode, clean auto-reload, dirty-change
   notice, mtime/size save guard, advisory lock, file ops.
   *Exit:* external edit auto-reloads a clean buffer; follow tails a log.

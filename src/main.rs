@@ -12,6 +12,7 @@ mod render;
 mod search;
 mod storage;
 mod term;
+mod watch;
 
 use buffer::{Buffer, HUGE_WINDOW};
 use input::{Key, Parser};
@@ -25,10 +26,11 @@ struct Args {
     #[allow(dead_code)] // workspace root drives the S6 picker
     workspace: Option<PathBuf>,
     files: Vec<PathBuf>,
+    follow: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
-    let mut args = Args { workspace: None, files: Vec::new() };
+    let mut args = Args { workspace: None, files: Vec::new(), follow: false };
     let mut it = std::env::args_os().skip(1);
     while let Some(a) = it.next() {
         match a.to_str() {
@@ -36,6 +38,7 @@ fn parse_args() -> Result<Args, String> {
                 let root = it.next().ok_or("-w requires a directory argument")?;
                 args.workspace = Some(PathBuf::from(root));
             }
+            Some("-F") | Some("--follow") => args.follow = true,
             Some("-h") | Some("--help") => {
                 println!("{USAGE}");
                 std::process::exit(0);
@@ -56,7 +59,7 @@ fn parse_args() -> Result<Args, String> {
     Ok(args)
 }
 
-const USAGE: &str = "usage: teddy [-w workspace-root] [file ...]";
+const USAGE: &str = "usage: teddy [-w workspace-root] [-F|--follow] [file ...]";
 
 fn main() -> ExitCode {
     let args = match parse_args() {
@@ -74,7 +77,14 @@ fn main() -> ExitCode {
     } else {
         for f in &args.files {
             match Buffer::open(f) {
-                Ok(b) => buffers.push(b),
+                Ok(mut b) => {
+                    if args.follow {
+                        b.follow = true;
+                        b.readonly = true; // reload discards edits anyway
+                        b.cursor = b.len();
+                    }
+                    buffers.push(b)
+                }
                 Err(e) => {
                     eprintln!("teddy: {}: {e}", f.display());
                     return ExitCode::FAILURE;
@@ -177,6 +187,18 @@ fn run(buffers: &mut [Buffer]) -> std::io::Result<()> {
     #[cfg(feature = "perf")]
     let mut perf = perf::Perf::from_env();
 
+    // spec §13: watch open files; a watcher that can't start degrades to
+    // no external-change detection rather than failing the editor
+    let mut watcher = watch::Watcher::new().ok();
+    if let Some(w) = watcher.as_mut() {
+        for (i, b) in buffers.iter().enumerate() {
+            if let Some(p) = &b.path {
+                let _ = w.watch(i as u64, p); // new-file buffers: not on disk yet
+            }
+        }
+    }
+    let mut watch_tokens: Vec<u64> = Vec::new();
+
     loop {
         // spec §18: input drains before paint (zero timeout while dirty
         // or while cooperative jobs want their next slice)
@@ -185,7 +207,9 @@ fn run(buffers: &mut [Buffer]) -> std::io::Result<()> {
             || buffers[active].index_build.is_some();
         let timeout =
             if dirty || jobs_active { 0 } else if parser.has_pending() { 10 } else { 250 };
-        if term::poll_stdin(timeout)? {
+        let (stdin_ready, watch_ready) =
+            term::poll_stdin(watcher.as_ref().map(|w| w.fd()), timeout)?;
+        if stdin_ready {
             let n = term::read_stdin(&mut read_buf)?;
             if n == 0 {
                 return Ok(()); // EOF: controlling terminal went away
@@ -194,13 +218,58 @@ fn run(buffers: &mut [Buffer]) -> std::io::Result<()> {
             perf.frame_start();
             parser.feed(&read_buf[..n], &mut keys);
         } else {
-            if timeout > 0 {
+            if timeout > 0 && !watch_ready {
                 parser.flush_timeout(&mut keys);
             }
-            // ponytail: poll-tick resize check; SIGWINCH plumbing is S5
+            // ponytail: poll-tick resize check; SIGWINCH would only save
+            // one 250ms tick of latency
             let s = term::size();
             if s != (cols, rows) {
                 (cols, rows) = s;
+                dirty = true;
+            }
+        }
+
+        if watch_ready {
+            let w = watcher.as_mut().expect("watch_ready without watcher");
+            watch_tokens.clear();
+            w.drain(&mut watch_tokens);
+            for &t in &watch_tokens {
+                let Some(buf) = buffers.get_mut(t as usize) else { continue };
+                // re-arm FIRST: an atomic-replace writer left a new inode
+                // behind, and arming before the stat/reload means any write
+                // that lands after this line fires a fresh event (no
+                // missed-change window)
+                if let Some(p) = buf.path.clone() {
+                    let _ = w.watch(t, &p);
+                }
+                // stat confirmation (spec §13): our own saves and event
+                // bursts that net out to the recorded state are ignored
+                if !buf.disk_changed() {
+                    continue;
+                }
+                if buf.follow || !buf.modified() {
+                    // clean buffers and follow mode hard-reload
+                    if buf.reload().is_ok() {
+                        status_msg.clear();
+                        let _ = write!(status_msg, "{}: reloaded (changed on disk)", buf.name);
+                        if t as usize == active {
+                            // in-flight jobs hold byte offsets into the old content
+                            search_job = None;
+                            replace_job = None;
+                            confirm_match = None;
+                            // prompt text survives a reload; a highlighted
+                            // match does not
+                            if mode == Mode::ReplaceConfirm {
+                                mode = Mode::Edit;
+                            }
+                        }
+                    }
+                } else {
+                    buf.external_change = true;
+                    status_msg.clear();
+                    let _ = write!(status_msg, "{}: file changed on disk", buf.name);
+                }
                 dirty = true;
             }
         }
@@ -400,6 +469,10 @@ fn run(buffers: &mut [Buffer]) -> std::io::Result<()> {
                         Ok(()) => {
                             let _ = write!(status_msg, "saved {}", buf.name);
                             pending_force_save = false;
+                            // our rename left a new inode: re-arm the watch
+                            if let (Some(w), Some(p)) = (watcher.as_mut(), buf.path.clone()) {
+                                let _ = w.watch(active as u64, &p);
+                            }
                         }
                         Err(e) if e.to_string() == "file changed on disk" => {
                             status_msg.push_str("file changed on disk — Ctrl+S again to overwrite");
@@ -466,7 +539,7 @@ fn run(buffers: &mut [Buffer]) -> std::io::Result<()> {
         }
 
         // cooperative work slice (spec §18): runs only when input is idle
-        if !term::poll_stdin(0)? {
+        if !term::poll_stdin(None, 0)?.0 {
             if let Some(s) = &mut search_job {
                 let buf = &mut buffers[active];
                 match s.step(buf, SLICE, &mut job_scratch) {
@@ -527,7 +600,7 @@ fn run(buffers: &mut [Buffer]) -> std::io::Result<()> {
             }
         }
 
-        if dirty && !term::poll_stdin(0)? {
+        if dirty && !term::poll_stdin(None, 0)?.0 {
             let buf = &mut buffers[active];
             let cursor_screen = build_view(
                 buf,
@@ -1008,6 +1081,12 @@ fn format_status(buf: &mut Buffer, left: &mut String, right: &mut String) {
     }
     if buf.io_error {
         left.push_str("  IOERR");
+    }
+    if buf.follow {
+        left.push_str("  FOLLOW");
+    }
+    if buf.external_change {
+        left.push_str("  CHG");
     }
     if buf.huge || buf.line_index.is_none() {
         let pct = if buf.len() == 0 { 100 } else { buf.cursor * 100 / buf.len() };

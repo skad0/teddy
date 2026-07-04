@@ -49,6 +49,11 @@ pub struct Buffer {
     pub huge: bool,
     pub binary: bool,
     pub io_error: bool,
+    /// Follow mode (spec §13): external changes hard-reload and pin to EOF.
+    pub follow: bool,
+    /// External change seen while the buffer had unsaved edits (spec §13:
+    /// core records change metadata; merge plugins own anything richer).
+    pub external_change: bool,
     // cursor/viewport
     pub cursor: u64, // byte offset
     pub goal_col: usize,
@@ -129,6 +134,8 @@ impl Buffer {
             huge: false,
             binary: false,
             io_error: false,
+            follow: false,
+            external_change: false,
             cursor: 0,
             goal_col: 0,
             top_line: 0,
@@ -213,6 +220,33 @@ impl Buffer {
             }
         }
         self.line_index = Some(LineIndex::from_vec(newlines));
+        Ok(())
+    }
+
+    /// Stat confirmation (spec §13): true when the file on disk no longer
+    /// matches the recorded (len, mtime) basis. A missing file counts as
+    /// changed; a buffer without one recorded (untitled/new) never does.
+    pub fn disk_changed(&self) -> bool {
+        let (Some(path), Some((len, mtime))) = (self.path.as_ref(), self.disk_state) else {
+            return false;
+        };
+        match std::fs::metadata(path) {
+            Ok(m) => m.len() != len || m.modified().ok() != Some(mtime),
+            Err(_) => true,
+        }
+    }
+
+    /// Reopen from disk (spec §13 reload): the content basis changed, so
+    /// the piece chain, add store, undo/redo, and index are rebuilt from
+    /// the new inode. Cursor clamps (EOF in follow mode); the view
+    /// rescrolls on the next paint.
+    pub fn reload(&mut self) -> io::Result<()> {
+        let path = self.path.clone().ok_or_else(|| io::Error::other("buffer has no file"))?;
+        let mut nb = Buffer::open(&path)?;
+        nb.follow = self.follow;
+        nb.readonly = nb.readonly || self.follow;
+        nb.cursor = if self.follow { nb.len() } else { self.cursor.min(nb.len()) };
+        *self = nb;
         Ok(())
     }
 
@@ -462,6 +496,7 @@ impl Buffer {
         let meta = std::fs::metadata(&path)?;
         self.disk_state = Some((meta.len(), meta.modified()?));
         self.saved_state_id = self.state_id;
+        self.external_change = false;
         Ok(())
     }
 
@@ -568,6 +603,32 @@ mod tests {
         let mut out = Vec::new();
         b.read_range(4, 3, &mut out);
         assert_eq!(out, b"two");
+        std::fs::remove_file(&p).unwrap();
+    }
+
+    #[test]
+    fn disk_changed_and_reload() {
+        let p = temp("reload", b"old contents\n");
+        let mut b = Buffer::open(&p).unwrap();
+        b.cursor = 12;
+        assert!(!b.disk_changed());
+        std::fs::write(&p, b"new\n").unwrap(); // len differs: mtime-proof
+        assert!(b.disk_changed());
+        b.replace(0, 0, b"x", 1).unwrap(); // dirty edit survives until reload
+        b.reload().unwrap();
+        assert!(!b.disk_changed());
+        assert!(!b.modified());
+        assert_eq!(b.cursor, 4, "cursor clamped to new len");
+        let mut out = Vec::new();
+        b.read_range(0, 4, &mut out);
+        assert_eq!(out, b"new\n");
+        // follow mode pins to EOF
+        b.follow = true;
+        b.cursor = 0;
+        std::fs::write(&p, b"new\nmore\n").unwrap();
+        b.reload().unwrap();
+        assert_eq!(b.cursor, 9);
+        assert!(b.readonly, "follow implies read-only");
         std::fs::remove_file(&p).unwrap();
     }
 
