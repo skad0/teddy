@@ -16,6 +16,8 @@ pub const WIDGET_EVENT: u16 = 5;
 pub const EDIT_TX: u16 = 6;
 pub const EDIT_RESULT: u16 = 7;
 pub const STATUS: u16 = 8;
+pub const VIEWPORT: u16 = 9;
+pub const SPANS: u16 = 10;
 
 const HEADER_LEN: usize = 28;
 // Per-tick pipe budget: a flooding plugin yields to input/paint and is polled again next tick.
@@ -159,6 +161,47 @@ pub fn parse_widget(payload: &[u8]) -> Option<Widget> {
     })
 }
 
+pub fn parse_spans(payload: &[u8]) -> Option<Vec<(u16, Vec<(u16, u16, u8)>)>> {
+    if payload.len() < 2 {
+        return None;
+    }
+
+    let row_count = u16::from_le_bytes(payload[0..2].try_into().ok()?) as usize;
+    let mut at = 2usize;
+    let mut rows = Vec::with_capacity(row_count);
+
+    for _ in 0..row_count {
+        if at + 4 > payload.len() {
+            return None;
+        }
+        let row_idx = u16::from_le_bytes(payload[at..at + 2].try_into().ok()?);
+        at += 2;
+        let span_count = u16::from_le_bytes(payload[at..at + 2].try_into().ok()?) as usize;
+        at += 2;
+        let bytes = span_count.checked_mul(5)?;
+        if at.checked_add(bytes)? > payload.len() {
+            return None;
+        }
+
+        let mut spans = Vec::with_capacity(span_count);
+        for _ in 0..span_count {
+            let start = u16::from_le_bytes(payload[at..at + 2].try_into().ok()?);
+            at += 2;
+            let len = u16::from_le_bytes(payload[at..at + 2].try_into().ok()?);
+            at += 2;
+            let style = payload[at];
+            at += 1;
+            spans.push((start, len, style));
+        }
+        rows.push((row_idx, spans));
+    }
+
+    if at != payload.len() {
+        return None;
+    }
+    Some(rows)
+}
+
 #[allow(dead_code)]
 pub struct Plugin {
     child: Child,
@@ -171,6 +214,7 @@ pub struct Plugin {
     pub commands: Vec<String>,
     pub widgets: HashMap<u64, Widget>,
     pub notices: Vec<String>,
+    pub wants_viewport: bool,
     hello_ok: bool,
 }
 
@@ -205,6 +249,7 @@ impl Plugin {
             commands: Vec::new(),
             widgets: HashMap::new(),
             notices: Vec::new(),
+            wants_viewport: false,
             hello_ok: false,
         })
     }
@@ -256,6 +301,7 @@ impl Plugin {
                                 break;
                             }
                             self.hello_ok = true;
+                            self.wants_viewport = frame.flags & 0x1 != 0;
                             continue;
                         }
                         self.handle_frame(frame, &mut out);
@@ -305,6 +351,7 @@ impl Plugin {
         self.commands.clear();
         self.widgets.clear();
         self.notices.clear();
+        self.wants_viewport = false;
         self.hello_ok = false;
         Ok(())
     }
@@ -435,6 +482,21 @@ mod tests {
         payload
     }
 
+    fn spans_payload(rows: &[(u16, &[(u16, u16, u8)])]) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&(rows.len() as u16).to_le_bytes());
+        for (row, spans) in rows {
+            payload.extend_from_slice(&row.to_le_bytes());
+            payload.extend_from_slice(&(spans.len() as u16).to_le_bytes());
+            for (start, len, style) in *spans {
+                payload.extend_from_slice(&start.to_le_bytes());
+                payload.extend_from_slice(&len.to_le_bytes());
+                payload.push(*style);
+            }
+        }
+        payload
+    }
+
     #[test]
     fn round_trip_split_boundaries() {
         let original = frame(b"hello");
@@ -480,6 +542,28 @@ mod tests {
         let mut overlong = payload;
         overlong.push(0);
         assert!(parse_widget(&overlong).is_none());
+    }
+
+    #[test]
+    fn parses_spans_round_trip() {
+        let payload = spans_payload(&[(0, &[(0, 2, 1), (8, 4, 2)]), (3, &[(1, 9, 8)])]);
+        let spans = parse_spans(&payload).unwrap();
+        assert_eq!(
+            spans,
+            vec![(0, vec![(0, 2, 1), (8, 4, 2)]), (3, vec![(1, 9, 8)])]
+        );
+    }
+
+    #[test]
+    fn truncated_spans_are_rejected() {
+        let payload = spans_payload(&[(0, &[(0, 2, 1)])]);
+        for n in 0..payload.len() {
+            assert!(parse_spans(&payload[..n]).is_none(), "accepted len {n}");
+        }
+
+        let mut overlong = payload;
+        overlong.push(0);
+        assert!(parse_spans(&overlong).is_none());
     }
 
     #[test]

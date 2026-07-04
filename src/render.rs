@@ -90,6 +90,8 @@ pub struct View<'a> {
     pub row_bytes: &'a [Vec<u8>],
     /// Selection span per row as byte offsets into that row's bytes.
     pub row_sel: &'a [Option<(usize, usize)>],
+    /// Highlight spans per visible row as byte offsets into row_bytes before horizontal trim.
+    pub row_spans: &'a [Vec<(u16, u16, u8)>],
     pub left_col: usize,
     /// Screen cursor position, 0-based within the editor area.
     pub cursor_screen: (u16, u16),
@@ -179,11 +181,13 @@ fn emit_row(
     left: usize,
     width: usize,
     sel: Option<(usize, usize)>,
+    spans: &[(u16, u16, u8)],
 ) {
     let mut cell = 0usize;
     let mut i = 0usize;
     let limit = left + width;
     let mut in_sel = false;
+    let mut active_style = 0u8;
     while i < bytes.len() && cell < limit {
         if let Some((a, b)) = sel {
             if !in_sel && i >= a && i < b {
@@ -198,10 +202,19 @@ fn emit_row(
             Token::Char(n, w) => (n, w, None),
             Token::Escape(b) => (1, 4, Some(b)),
         };
+        let wanted_style = if escape.is_none() {
+            style_at(spans, i)
+        } else {
+            0
+        };
         let vis_from = cell.max(left);
         let vis_to = (cell + w).min(limit);
         if vis_to > vis_from {
             if cell >= left && cell + w <= limit {
+                if active_style != wanted_style {
+                    set_row_style(out, wanted_style, in_sel);
+                    active_style = wanted_style;
+                }
                 match escape {
                     Some(b) => {
                         out.extend_from_slice(THEME.escape_on);
@@ -216,6 +229,10 @@ fn emit_row(
                     None => out.extend_from_slice(&bytes[i..i + consumed]),
                 }
             } else {
+                if active_style != 0 {
+                    set_row_style(out, 0, in_sel);
+                    active_style = 0;
+                }
                 // token straddles an edge: pad its visible cells
                 for _ in vis_from..vis_to {
                     out.push(b' ');
@@ -228,7 +245,43 @@ fn emit_row(
     if in_sel {
         out.extend_from_slice(THEME.sel_off);
     }
+    if active_style != 0 {
+        set_row_style(out, 0, false);
+    }
     out.extend_from_slice(b"\x1b[K");
+}
+
+fn style_at(spans: &[(u16, u16, u8)], byte: usize) -> u8 {
+    for &(start, len, style) in spans {
+        let start = start as usize;
+        let end = start.saturating_add(len as usize);
+        if byte >= start && byte < end {
+            return style;
+        }
+    }
+    0
+}
+
+fn style_sgr(style: u8) -> &'static [u8] {
+    match style {
+        1 => b"\x1b[35m",
+        2 => b"\x1b[32m",
+        3 => b"\x1b[90m",
+        4 => b"\x1b[36m",
+        5 => b"",
+        6 => b"\x1b[1;34m",
+        7 => b"\x1b[3m",
+        8 => b"\x1b[4;36m",
+        _ => b"",
+    }
+}
+
+fn set_row_style(out: &mut Vec<u8>, style: u8, in_sel: bool) {
+    out.extend_from_slice(b"\x1b[0m");
+    if in_sel {
+        out.extend_from_slice(THEME.sel_on);
+    }
+    out.extend_from_slice(style_sgr(style));
 }
 
 pub fn paint(f: &mut FrameBuf, cache: &mut RenderCache, v: &View) {
@@ -286,6 +339,13 @@ pub fn paint(f: &mut FrameBuf, cache: &mut RenderCache, v: &View) {
         match v.row_bytes.get(r) {
             Some(bytes) => {
                 fnv(&mut h, bytes);
+                if let Some(spans) = v.row_spans.get(r) {
+                    for &(start, len, style) in spans {
+                        fnv(&mut h, &start.to_le_bytes());
+                        fnv(&mut h, &len.to_le_bytes());
+                        fnv(&mut h, &[style]);
+                    }
+                }
                 if let Some((a, bb)) = v.row_sel.get(r).copied().flatten() {
                     fnv(&mut h, &(a as u64).to_le_bytes());
                     fnv(&mut h, &(bb as u64).to_le_bytes());
@@ -303,6 +363,7 @@ pub fn paint(f: &mut FrameBuf, cache: &mut RenderCache, v: &View) {
                     v.left_col,
                     v.cols as usize,
                     v.row_sel.get(r).copied().flatten(),
+                    v.row_spans.get(r).map_or(&[], Vec::as_slice),
                 ),
                 None => b.extend_from_slice(b"\x1b[K"),
             }
@@ -359,20 +420,38 @@ mod tests {
 
     fn row(bytes: &[u8], left: usize, width: usize) -> String {
         let mut out = Vec::new();
-        emit_row(&mut out, bytes, left, width, None);
+        emit_row(&mut out, bytes, left, width, None, &[]);
         String::from_utf8_lossy(&out).into_owned()
     }
 
     #[test]
     fn selection_reverse_video() {
         let mut out = Vec::new();
-        emit_row(&mut out, b"hello", 0, 80, Some((1, 4)));
+        emit_row(&mut out, b"hello", 0, 80, Some((1, 4)), &[]);
         let s = String::from_utf8_lossy(&out).into_owned();
         assert_eq!(s, "h\x1b[7mell\x1b[27mo\x1b[K");
         out.clear();
-        emit_row(&mut out, b"ab", 0, 80, Some((1, 2))); // sel to end of row
+        emit_row(&mut out, b"ab", 0, 80, Some((1, 2)), &[]); // sel to end of row
         let s = String::from_utf8_lossy(&out).into_owned();
         assert_eq!(s, "a\x1b[7mb\x1b[27m\x1b[K");
+    }
+
+    #[test]
+    fn highlight_spans_wrap_printable_bytes() {
+        let mut out = Vec::new();
+        emit_row(
+            &mut out,
+            b"fn x = \"hi\"\x1b",
+            0,
+            80,
+            None,
+            &[(0, 2, 1), (7, 4, 2), (11, 1, 1)],
+        );
+        let s = String::from_utf8_lossy(&out).into_owned();
+        assert!(s.contains("\x1b[35mfn\x1b[0m"), "{s:?}");
+        assert!(s.contains("\x1b[32m\"hi\"\x1b[0m"), "{s:?}");
+        assert!(s.contains("\\x1B"), "{s:?}");
+        assert!(!s.contains("\x1b[35m\\x1B"), "{s:?}");
     }
 
     #[test]
@@ -449,6 +528,7 @@ mod tests {
             active_tab: 0,
             row_bytes: &rows,
             row_sel: &sels,
+            row_spans: &[],
             left_col: 0,
             cursor_screen: (2, 1),
             status_left: " a.txt *",

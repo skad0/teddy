@@ -54,7 +54,7 @@ exit checks, delegation, budget. Update checkboxes as stages land.
   revisions, stale-drop, structured widgets, restart API.
   *Exit:* demo plugin renders a list widget and submits a validated
   byte-range edit transaction.
-- [ ] **S8 — first-party plugins**
+- [x] **S8 — first-party plugins**
   Rust + Markdown lexical highlighters, session/recovery, LSP shell,
   AI command/chat shell.
   *Exit:* highlighter plugin colors the visible viewport out-of-process.

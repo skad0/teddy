@@ -208,6 +208,11 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
     let mut widget_sel = 0usize;
     let mut plugins: Vec<plugin::Plugin> = Vec::new();
     let mut next_plugin_request = 1u32;
+    let mut viewport_spans: Vec<Vec<(u16, u16, u8)>> = Vec::new();
+    let mut spans_revision: u64 = 0;
+    let mut spans_buffer: usize = usize::MAX;
+    let mut last_viewport_sent: Option<(usize, u64, u64, u64, u16, u16)> = None;
+    let mut viewport_seq: u32 = 0;
 
     let mut frame = FrameBuf::new();
     let mut render_cache = RenderCache::new();
@@ -372,28 +377,55 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                 .map(|w| w.revision)
                 .max()
                 .unwrap_or(0);
+            let before_wants_viewport = plugins[i].wants_viewport;
             let frames = plugins[i].pump();
             let mut plugin_dirty = !frames.is_empty();
+            if !before_wants_viewport && plugins[i].wants_viewport {
+                plugin_dirty = true;
+            }
             for frame in frames {
-                if frame.msg_type != plugin::EDIT_TX {
-                    continue;
+                match frame.msg_type {
+                    plugin::EDIT_TX => {
+                        let ok = handle_plugin_edit(&frame, buffers);
+                        if ok {
+                            dirty = true;
+                            plugin_dirty = true;
+                        }
+                        plugins[i].send(&plugin::Frame {
+                            msg_type: plugin::EDIT_RESULT,
+                            flags: 0,
+                            request_id: frame.request_id,
+                            resource_id: frame.resource_id,
+                            resource_revision: buffers
+                                .get(frame.resource_id as usize)
+                                .map(|b| b.revision)
+                                .unwrap_or(0),
+                            payload: vec![u8::from(ok)],
+                        });
+                    }
+                    plugin::SPANS => {
+                        if frame.resource_id == active as u64
+                            && frame.resource_revision == buffers[active].revision
+                            && frame.request_id == viewport_seq
+                        {
+                            let editor_rows_now = rows.saturating_sub(2).max(1) as usize;
+                            if let Some(rows) = plugin::parse_spans(&frame.payload) {
+                                viewport_spans.clear();
+                                viewport_spans.resize(editor_rows_now, Vec::new());
+                                for (row, spans) in rows {
+                                    if let Some(slot) = viewport_spans.get_mut(row as usize) {
+                                        *slot = spans;
+                                    }
+                                }
+                                spans_buffer = active;
+                                spans_revision = frame.resource_revision;
+                                dirty = true;
+                                plugin_dirty = true;
+                            }
+                        }
+                    }
+                    _ => {}
                 }
-                let ok = handle_plugin_edit(&frame, buffers);
-                if ok {
-                    dirty = true;
-                    plugin_dirty = true;
-                }
-                plugins[i].send(&plugin::Frame {
-                    msg_type: plugin::EDIT_RESULT,
-                    flags: 0,
-                    request_id: frame.request_id,
-                    resource_id: frame.resource_id,
-                    resource_revision: buffers
-                        .get(frame.resource_id as usize)
-                        .map(|b| b.revision)
-                        .unwrap_or(0),
-                    payload: vec![u8::from(ok)],
-                });
             }
             if plugins[i].widgets.len() != before_count
                 || plugins[i]
@@ -1214,6 +1246,12 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                 tabs_buf.clear();
                 tabs_buf.extend(buffers.iter().map(|b| (b.name.clone(), b.modified())));
             }
+            if spans_buffer != active || spans_revision != buffers[active].revision {
+                viewport_spans.clear();
+                spans_buffer = usize::MAX;
+                spans_revision = 0;
+            }
+            let valid_spans = spans_buffer == active && spans_revision == buffers[active].revision;
             let v = View {
                 cols,
                 rows,
@@ -1221,6 +1259,7 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                 active_tab: active,
                 row_bytes: &row_store,
                 row_sel: &row_sel,
+                row_spans: if valid_spans { &viewport_spans } else { &[] },
                 left_col: buffers[active].left_col,
                 cursor_screen,
                 status_left: &status_left,
@@ -1229,6 +1268,34 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
             render::paint(&mut frame, &mut render_cache, &v);
             out.write_all(frame.as_bytes())?;
             out.flush()?;
+            let viewport_key = (
+                active,
+                buffers[active].revision,
+                buffers[active].top_line,
+                buffers[active].top_byte,
+                cols,
+                rows,
+            );
+            if mode == Mode::Edit
+                && last_viewport_sent != Some(viewport_key)
+                && plugins.iter().any(|p| p.alive && p.wants_viewport)
+            {
+                // Overlays own row_store outside Edit mode, so VIEWPORT frames are only
+                // sent for real buffer rows. Rows are clipped again in the protocol payload.
+                viewport_seq = viewport_seq.wrapping_add(1);
+                let payload = viewport_payload(&buffers[active].name, &row_store);
+                for p in plugins.iter_mut().filter(|p| p.alive && p.wants_viewport) {
+                    p.send(&plugin::Frame {
+                        msg_type: plugin::VIEWPORT,
+                        flags: 0,
+                        request_id: viewport_seq,
+                        resource_id: active as u64,
+                        resource_revision: buffers[active].revision,
+                        payload: payload.clone(),
+                    });
+                }
+                last_viewport_sent = Some(viewport_key);
+            }
             dirty = false;
             #[cfg(feature = "perf")]
             perf.frame_end(frame.as_bytes().len());
@@ -1320,6 +1387,22 @@ fn handle_plugin_edit(frame: &plugin::Frame, buffers: &mut [Buffer]) -> bool {
     buf.group_counter += 1;
     let group = buf.group_counter;
     buf.replace(start, end, &frame.payload[16..], group).is_ok()
+}
+
+fn viewport_payload(name: &str, rows: &[Vec<u8>]) -> Vec<u8> {
+    let name = name.as_bytes();
+    let name_len = name.len().min(u16::MAX as usize);
+    let row_count = rows.len().min(u16::MAX as usize);
+    let mut payload = Vec::with_capacity(2 + name_len + 2 + row_count * 16);
+    payload.extend_from_slice(&(name_len as u16).to_le_bytes());
+    payload.extend_from_slice(&name[..name_len]);
+    payload.extend_from_slice(&(row_count as u16).to_le_bytes());
+    for row in rows.iter().take(row_count) {
+        let len = row.len().min(4096).min(u16::MAX as usize);
+        payload.extend_from_slice(&(len as u16).to_le_bytes());
+        payload.extend_from_slice(&row[..len]);
+    }
+    payload
 }
 
 /// Dev-only frame timing + allocation counting (spec §20: perf tracing in
