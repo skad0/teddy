@@ -25,15 +25,59 @@ impl FrameBuf {
     }
 }
 
-pub struct TabInfo<'a> {
-    pub name: &'a str,
-    pub modified: bool,
+/// Theme table (spec §11): every styled element resolves here. Style-run
+/// merging arrives with plugin decorations in S7/S8.
+pub struct Theme {
+    pub chrome_on: &'static [u8],
+    pub chrome_off: &'static [u8],
+    pub active_on: &'static [u8],
+    pub active_off: &'static [u8],
+    pub sel_on: &'static [u8],
+    pub sel_off: &'static [u8],
+    pub escape_on: &'static [u8],
+    pub escape_off: &'static [u8],
+}
+
+pub const THEME: Theme = Theme {
+    chrome_on: b"\x1b[7m",
+    chrome_off: b"\x1b[0m",
+    active_on: b"\x1b[1m",
+    active_off: b"\x1b[22m",
+    sel_on: b"\x1b[7m",
+    sel_off: b"\x1b[27m",
+    escape_on: b"\x1b[2m",
+    escape_off: b"\x1b[22m",
+};
+
+/// Per-region content hashes from the previous frame: unchanged regions
+/// emit nothing (spec §11.2 dirty model, row granularity).
+pub struct RenderCache {
+    size: (u16, u16),
+    tab_hash: u64,
+    status_hash: u64,
+    row_hashes: Vec<u64>,
+}
+
+impl RenderCache {
+    pub fn new() -> Self {
+        RenderCache { size: (0, 0), tab_hash: 0, status_hash: 0, row_hashes: Vec::new() }
+    }
+}
+
+const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+
+fn fnv(h: &mut u64, bytes: &[u8]) {
+    for &b in bytes {
+        *h ^= b as u64;
+        *h = h.wrapping_mul(0x100000001b3);
+    }
 }
 
 pub struct View<'a> {
     pub cols: u16,
     pub rows: u16,
-    pub tabs: &'a [TabInfo<'a>],
+    /// (name, modified) per tab.
+    pub tabs: &'a [(String, bool)],
     pub active_tab: usize,
     /// Pre-read bytes of each visible editor row (without trailing \n).
     pub row_bytes: &'a [Vec<u8>],
@@ -126,10 +170,10 @@ fn emit_row(out: &mut Vec<u8>, bytes: &[u8], left: usize, width: usize, sel: Opt
     while i < bytes.len() && cell < limit {
         if let Some((a, b)) = sel {
             if !in_sel && i >= a && i < b {
-                out.extend_from_slice(b"\x1b[7m");
+                out.extend_from_slice(THEME.sel_on);
                 in_sel = true;
             } else if in_sel && i >= b {
-                out.extend_from_slice(b"\x1b[27m");
+                out.extend_from_slice(THEME.sel_off);
                 in_sel = false;
             }
         }
@@ -143,7 +187,9 @@ fn emit_row(out: &mut Vec<u8>, bytes: &[u8], left: usize, width: usize, sel: Opt
             if cell >= left && cell + w <= limit {
                 match escape {
                     Some(b) => {
-                        let _ = write!(out, "\x1b[2m\\x{:02X}\x1b[22m", b);
+                        out.extend_from_slice(THEME.escape_on);
+                        let _ = write!(out, "\\x{:02X}", b);
+                        out.extend_from_slice(THEME.escape_off);
                     }
                     None if bytes[i] == b'\t' => {
                         for _ in 0..w {
@@ -163,58 +209,107 @@ fn emit_row(out: &mut Vec<u8>, bytes: &[u8], left: usize, width: usize, sel: Opt
         cell += w;
     }
     if in_sel {
-        out.extend_from_slice(b"\x1b[27m");
+        out.extend_from_slice(THEME.sel_off);
     }
     out.extend_from_slice(b"\x1b[K");
 }
 
-pub fn paint(f: &mut FrameBuf, v: &View) {
+pub fn paint(f: &mut FrameBuf, cache: &mut RenderCache, v: &View) {
     let b = &mut f.bytes;
     b.clear();
-    b.extend_from_slice(b"\x1b[?25l\x1b[H");
-
-    // tabline (row 1), inverse video
-    b.extend_from_slice(b"\x1b[7m");
-    let mut col = 0usize;
-    for (i, tab) in v.tabs.iter().enumerate() {
-        let star = if tab.modified { "*" } else { "" };
-        let label_len = tab.name.len() + star.len() + 4;
-        if col + label_len > v.cols as usize {
-            break;
-        }
-        if i == v.active_tab {
-            let _ = write!(b, "\x1b[1m [{}{}] \x1b[22m", tab.name, star);
-        } else {
-            let _ = write!(b, "  {}{}  ", tab.name, star);
-        }
-        col += label_len;
-    }
-    pad(b, (v.cols as usize).saturating_sub(col));
-    b.extend_from_slice(b"\x1b[0m");
-
-    // editor area
     let editor_rows = v.rows.saturating_sub(2) as usize;
+
+    // structural change: resize invalidates everything (spec: structural
+    // clears only)
+    if cache.size != (v.cols, v.rows) {
+        cache.size = (v.cols, v.rows);
+        cache.tab_hash = 0;
+        cache.status_hash = 0;
+        cache.row_hashes.clear();
+        b.extend_from_slice(b"\x1b[2J");
+    }
+    cache.row_hashes.resize(editor_rows, 0);
+
+    b.extend_from_slice(b"\x1b[?25l");
+
+    // tabline (row 1)
+    let mut th = FNV_OFFSET;
+    for (i, (name, modified)) in v.tabs.iter().enumerate() {
+        fnv(&mut th, name.as_bytes());
+        fnv(&mut th, &[*modified as u8, (i == v.active_tab) as u8]);
+    }
+    if th != cache.tab_hash {
+        cache.tab_hash = th;
+        b.extend_from_slice(b"\x1b[H");
+        b.extend_from_slice(THEME.chrome_on);
+        let mut col = 0usize;
+        for (i, (name, modified)) in v.tabs.iter().enumerate() {
+            let star = if *modified { "*" } else { "" };
+            let label_len = name.len() + star.len() + 4;
+            if col + label_len > v.cols as usize {
+                break;
+            }
+            if i == v.active_tab {
+                b.extend_from_slice(THEME.active_on);
+                let _ = write!(b, " [{}{}] ", name, star);
+                b.extend_from_slice(THEME.active_off);
+            } else {
+                let _ = write!(b, "  {}{}  ", name, star);
+            }
+            col += label_len;
+        }
+        pad(b, (v.cols as usize).saturating_sub(col));
+        b.extend_from_slice(THEME.chrome_off);
+    }
+
+    // editor rows: emit only rows whose content hash changed
     for r in 0..editor_rows {
-        let _ = write!(b, "\x1b[{};1H", r + 2);
+        let mut h = FNV_OFFSET;
+        fnv(&mut h, &(v.left_col as u64).to_le_bytes());
         match v.row_bytes.get(r) {
             Some(bytes) => {
-                emit_row(b, bytes, v.left_col, v.cols as usize, v.row_sel.get(r).copied().flatten())
+                fnv(&mut h, bytes);
+                if let Some((a, bb)) = v.row_sel.get(r).copied().flatten() {
+                    fnv(&mut h, &(a as u64).to_le_bytes());
+                    fnv(&mut h, &(bb as u64).to_le_bytes());
+                }
             }
-            None => b.extend_from_slice(b"\x1b[K"),
+            None => fnv(&mut h, b"\0absent"),
+        }
+        if h != cache.row_hashes[r] {
+            cache.row_hashes[r] = h;
+            let _ = write!(b, "\x1b[{};1H", r + 2);
+            match v.row_bytes.get(r) {
+                Some(bytes) => emit_row(
+                    b,
+                    bytes,
+                    v.left_col,
+                    v.cols as usize,
+                    v.row_sel.get(r).copied().flatten(),
+                ),
+                None => b.extend_from_slice(b"\x1b[K"),
+            }
         }
     }
 
-    // statusline (last row), inverse video
-    let _ = write!(b, "\x1b[{};1H\x1b[7m", v.rows);
-    let w = v.cols as usize;
-    let left = truncated(v.status_left, w);
-    b.extend_from_slice(left.as_bytes());
-    let right = truncated(v.status_right, w.saturating_sub(left.len()));
-    pad(b, w.saturating_sub(left.len() + right.len()));
-    b.extend_from_slice(right.as_bytes());
-    b.extend_from_slice(b"\x1b[0m");
+    // statusline (last row)
+    let mut sh = FNV_OFFSET;
+    fnv(&mut sh, v.status_left.as_bytes());
+    fnv(&mut sh, v.status_right.as_bytes());
+    if sh != cache.status_hash {
+        cache.status_hash = sh;
+        let _ = write!(b, "\x1b[{};1H", v.rows);
+        b.extend_from_slice(THEME.chrome_on);
+        let w = v.cols as usize;
+        let left = truncated(v.status_left, w);
+        b.extend_from_slice(left.as_bytes());
+        let right = truncated(v.status_right, w.saturating_sub(left.len()));
+        pad(b, w.saturating_sub(left.len() + right.len()));
+        b.extend_from_slice(right.as_bytes());
+        b.extend_from_slice(THEME.chrome_off);
+    }
 
-    // native cursor into the editor area
+    // native cursor: always positioned
     let _ = write!(b, "\x1b[{};{}H\x1b[?25h", v.cursor_screen.1 + 2, v.cursor_screen.0 + 1);
 }
 
@@ -319,9 +414,10 @@ mod tests {
     }
 
     #[test]
-    fn paint_smoke() {
+    fn paint_smoke_and_render_cache() {
         let mut f = FrameBuf::new();
-        let tabs = [TabInfo { name: "a.txt", modified: true }];
+        let mut cache = RenderCache::new();
+        let tabs = vec![("a.txt".to_string(), true)];
         let rows = vec![b"line one".to_vec(), b"line two".to_vec()];
         let sels = vec![None; rows.len()];
         let v = View {
@@ -336,10 +432,24 @@ mod tests {
             status_left: " a.txt *",
             status_right: "Ln 2, Col 3 ",
         };
-        paint(&mut f, &v);
+        paint(&mut f, &mut cache, &v);
         let s = String::from_utf8_lossy(f.as_bytes()).into_owned();
         assert!(s.contains("[a.txt*]"));
         assert!(s.contains("line one"));
         assert!(s.ends_with("\x1b[3;3H\x1b[?25h"));
+        let first_len = f.as_bytes().len();
+
+        // identical view: only cursor control bytes, no content re-emission
+        paint(&mut f, &mut cache, &v);
+        let s2 = String::from_utf8_lossy(f.as_bytes()).into_owned();
+        assert!(!s2.contains("line one"), "{s2:?}");
+        assert!(f.as_bytes().len() < 32, "cache miss: {} vs {first_len}", f.as_bytes().len());
+
+        // one row changes: only that row re-emits
+        let rows2 = vec![b"line one".to_vec(), b"CHANGED!".to_vec()];
+        let v2 = View { row_bytes: &rows2, ..v };
+        paint(&mut f, &mut cache, &v2);
+        let s3 = String::from_utf8_lossy(f.as_bytes()).into_owned();
+        assert!(s3.contains("CHANGED!") && !s3.contains("line one"), "{s3:?}");
     }
 }

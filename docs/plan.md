@@ -21,22 +21,22 @@ exit checks, delegation, budget. Update checkboxes as stages land.
   tabline/statusline, empty buffer, cursor movement, Ctrl+Q.
   *Exit:* opens/quits cleanly in a pty, terminal restored on panic,
   parser unit tests pass, non-tty exits with an error.
-- [ ] **S1 — byte storage**
+- [x] **S1 — byte storage**
   pread chunk cache, chunked piece chain, add store, byte-range
   transactions, render real file rows, `\xNN` invalid-UTF-8 escapes.
   *Exit:* opens a multi-GB file instantly with correct first viewport;
   piece-chain + transaction unit tests; invalid bytes render escaped.
-- [ ] **S2 — editing**
+- [x] **S2 — editing**
   Insert/delete, selections, capped undo/redo, atomic save, dirty-close
   prompt, read-only mode.
   *Exit:* edit→save round-trip is byte-identical outside edits;
   undo/redo invertibility test.
-- [ ] **S3 — huge-file behavior**
+- [x] **S3 — huge-file behavior**
   256 MiB threshold, status flags (HUGE/RO/NOIDX/BIN), byte-window
   scrolling, streaming literal search, replace-all disabled, progressive
   newline index.
   *Exit:* 1 GiB file opens <50 ms; search streams and cancels on input.
-- [ ] **S4 — renderer hardening**
+- [x] **S4 — renderer hardening**
   Dirty rows + region flags, viewport render cache, style runs, theme
   table, scroll-region optimization.
   *Exit:* dev-build instrumentation shows zero per-keypress allocation

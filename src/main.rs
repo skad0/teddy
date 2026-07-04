@@ -7,6 +7,7 @@ mod ignore;
 mod input;
 #[allow(dead_code)] // wrapped into S8 plugin executables
 mod lex;
+mod lines;
 mod render;
 mod search;
 mod storage;
@@ -14,7 +15,7 @@ mod term;
 
 use buffer::{Buffer, HUGE_WINDOW};
 use input::{Key, Parser};
-use render::{FrameBuf, TabInfo, View};
+use render::{FrameBuf, RenderCache, View};
 use std::fmt::Write as _;
 use std::io::Write as _;
 use std::path::PathBuf;
@@ -160,15 +161,21 @@ fn run(buffers: &mut [Buffer]) -> std::io::Result<()> {
     let mut job_scratch: Vec<u8> = Vec::new();
 
     let mut frame = FrameBuf::new();
+    let mut render_cache = RenderCache::new();
     let mut parser = Parser::new();
     let mut keys: Vec<Key> = Vec::with_capacity(16);
     let mut read_buf = [0u8; 1024];
     let mut row_store: Vec<Vec<u8>> = Vec::new();
     let mut row_sel: Vec<Option<(usize, usize)>> = Vec::new();
+    let mut starts_scratch: Vec<u64> = Vec::new();
     let mut status_left = String::new();
     let mut status_right = String::new();
     let mut scratch = Vec::new();
+    // owned tab snapshot, rebuilt only when a name/modified flag changes
+    let mut tabs_buf: Vec<(String, bool)> = Vec::new();
     let mut out = std::io::stdout().lock();
+    #[cfg(feature = "perf")]
+    let mut perf = perf::Perf::from_env();
 
     loop {
         // spec §18: input drains before paint (zero timeout while dirty
@@ -183,6 +190,8 @@ fn run(buffers: &mut [Buffer]) -> std::io::Result<()> {
             if n == 0 {
                 return Ok(()); // EOF: controlling terminal went away
             }
+            #[cfg(feature = "perf")]
+            perf.frame_start();
             parser.feed(&read_buf[..n], &mut keys);
         } else {
             if timeout > 0 {
@@ -451,7 +460,7 @@ fn run(buffers: &mut [Buffer]) -> std::io::Result<()> {
                         buf.sel_anchor = None;
                     }
                     buf.group_counter += 1;
-                    apply_movement(buf, base, editor_rows, &mut scratch);
+                    apply_movement(buf, base, editor_rows, &mut scratch, &mut starts_scratch);
                 }
             }
         }
@@ -527,6 +536,7 @@ fn run(buffers: &mut [Buffer]) -> std::io::Result<()> {
                 &mut row_store,
                 &mut row_sel,
                 &mut scratch,
+                &mut starts_scratch,
             );
             format_status(buf, &mut status_left, &mut status_right);
             match mode {
@@ -568,14 +578,20 @@ fn run(buffers: &mut [Buffer]) -> std::io::Result<()> {
                     }
                 }
             }
-            let tabs: Vec<TabInfo> = buffers
-                .iter()
-                .map(|b| TabInfo { name: &b.name, modified: b.modified() })
-                .collect(); // ponytail: tiny per-paint alloc, folded into S4 render cache
+            // rebuild the owned tab snapshot only on change (no per-paint alloc)
+            let tabs_stale = tabs_buf.len() != buffers.len()
+                || tabs_buf
+                    .iter()
+                    .zip(buffers.iter())
+                    .any(|(t, b)| t.0 != b.name || t.1 != b.modified());
+            if tabs_stale {
+                tabs_buf.clear();
+                tabs_buf.extend(buffers.iter().map(|b| (b.name.clone(), b.modified())));
+            }
             let v = View {
                 cols,
                 rows,
-                tabs: &tabs,
+                tabs: &tabs_buf,
                 active_tab: active,
                 row_bytes: &row_store,
                 row_sel: &row_sel,
@@ -584,10 +600,68 @@ fn run(buffers: &mut [Buffer]) -> std::io::Result<()> {
                 status_left: &status_left,
                 status_right: &status_right,
             };
-            render::paint(&mut frame, &v);
+            render::paint(&mut frame, &mut render_cache, &v);
             out.write_all(frame.as_bytes())?;
             out.flush()?;
             dirty = false;
+            #[cfg(feature = "perf")]
+            perf.frame_end(frame.as_bytes().len());
+        }
+    }
+}
+
+/// Dev-only frame timing + allocation counting (spec §20: perf tracing in
+/// dev builds only). Build with `--features perf`, set TEDDY_PERF=<path>.
+#[cfg(feature = "perf")]
+mod perf {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Instant;
+
+    static ALLOCS: AtomicU64 = AtomicU64::new(0);
+
+    struct Counting;
+
+    unsafe impl GlobalAlloc for Counting {
+        unsafe fn alloc(&self, l: Layout) -> *mut u8 {
+            ALLOCS.fetch_add(1, Ordering::Relaxed);
+            unsafe { System.alloc(l) }
+        }
+        unsafe fn dealloc(&self, p: *mut u8, l: Layout) {
+            unsafe { System.dealloc(p, l) }
+        }
+        unsafe fn realloc(&self, p: *mut u8, l: Layout, n: usize) -> *mut u8 {
+            ALLOCS.fetch_add(1, Ordering::Relaxed);
+            unsafe { System.realloc(p, l, n) }
+        }
+    }
+
+    #[global_allocator]
+    static A: Counting = Counting;
+
+    pub struct Perf {
+        log: Option<std::fs::File>,
+        t0: Option<Instant>,
+        allocs0: u64,
+    }
+
+    impl Perf {
+        pub fn from_env() -> Self {
+            let log = std::env::var_os("TEDDY_PERF").and_then(|p| std::fs::File::create(p).ok());
+            Perf { log, t0: None, allocs0: 0 }
+        }
+
+        pub fn frame_start(&mut self) {
+            self.t0 = Some(Instant::now());
+            self.allocs0 = ALLOCS.load(Ordering::Relaxed);
+        }
+
+        pub fn frame_end(&mut self, frame_bytes: usize) {
+            let (Some(t0), Some(log)) = (self.t0.take(), self.log.as_mut()) else { return };
+            let us = t0.elapsed().as_micros();
+            let allocs = ALLOCS.load(Ordering::Relaxed) - self.allocs0;
+            let _ = writeln!(log, "{us} {allocs} {frame_bytes}");
         }
     }
 }
@@ -675,10 +749,16 @@ fn update_goal(buf: &mut Buffer, scratch: &mut Vec<u8>) {
 }
 
 /// Returns true if anything changed (cursor or viewport).
-fn apply_movement(buf: &mut Buffer, key: Key, editor_rows: u64, scratch: &mut Vec<u8>) -> bool {
+fn apply_movement(
+    buf: &mut Buffer,
+    key: Key,
+    editor_rows: u64,
+    scratch: &mut Vec<u8>,
+    starts: &mut Vec<u64>,
+) -> bool {
     let before = (buf.cursor, buf.top_line, buf.top_byte);
     if buf.huge || buf.line_index.is_none() {
-        huge_movement(buf, key, editor_rows, scratch);
+        huge_movement(buf, key, editor_rows, scratch, starts);
     } else {
         normal_movement(buf, key, editor_rows, scratch);
     }
@@ -718,8 +798,15 @@ fn normal_movement(buf: &mut Buffer, key: Key, editor_rows: u64, scratch: &mut V
 
 /// Huge/unindexed movement: rows are reconstructed from a byte window
 /// around top_byte; navigation is line-start hopping within that window.
-fn huge_movement(buf: &mut Buffer, key: Key, editor_rows: u64, scratch: &mut Vec<u8>) {
-    let starts = window_row_starts(buf, editor_rows as usize + 1, scratch);
+fn huge_movement(
+    buf: &mut Buffer,
+    key: Key,
+    editor_rows: u64,
+    scratch: &mut Vec<u8>,
+    starts: &mut Vec<u64>,
+) {
+    window_row_starts(buf, editor_rows as usize + 1, scratch, starts);
+    let starts = &*starts;
     let row_of = |c: u64| starts.iter().rposition(|&s| s <= c).unwrap_or(0);
     match key {
         Key::Left => buf.cursor = buf.prev_boundary(buf.cursor),
@@ -773,12 +860,13 @@ fn huge_movement(buf: &mut Buffer, key: Key, editor_rows: u64, scratch: &mut Vec
     }
 }
 
-/// Starts of up to `n` display rows beginning at top_byte.
-fn window_row_starts(buf: &mut Buffer, n: usize, scratch: &mut Vec<u8>) -> Vec<u64> {
+/// Fill `starts` with up to `n` display-row starts beginning at top_byte.
+fn window_row_starts(buf: &mut Buffer, n: usize, scratch: &mut Vec<u8>, starts: &mut Vec<u64>) {
     scratch.clear();
     let take = HUGE_WINDOW.min(buf.len().saturating_sub(buf.top_byte));
     buf.read_range(buf.top_byte, take, scratch);
-    let mut starts = vec![buf.top_byte];
+    starts.clear();
+    starts.push(buf.top_byte);
     for (i, &b) in scratch.iter().enumerate() {
         if starts.len() >= n {
             break;
@@ -787,7 +875,6 @@ fn window_row_starts(buf: &mut Buffer, n: usize, scratch: &mut Vec<u8>) -> Vec<u
             starts.push(buf.top_byte + i as u64 + 1);
         }
     }
-    starts
 }
 
 fn prev_line_start(buf: &mut Buffer, from: u64, scratch: &mut Vec<u8>) -> u64 {
@@ -817,6 +904,7 @@ fn build_view(
     row_store: &mut Vec<Vec<u8>>,
     row_sel: &mut Vec<Option<(usize, usize)>>,
     scratch: &mut Vec<u8>,
+    starts: &mut Vec<u64>,
 ) -> (u16, u16) {
     row_store.iter_mut().for_each(|r| r.clear());
     while row_store.len() < editor_rows {
@@ -828,12 +916,12 @@ fn build_view(
     let sel = buf.selection();
 
     if buf.huge || buf.line_index.is_none() {
-        let mut starts = window_row_starts(buf, editor_rows + 1, scratch);
+        window_row_starts(buf, editor_rows + 1, scratch, starts);
         let mut r = starts.iter().rposition(|&s| s <= buf.cursor).unwrap_or(0);
         // cursor left the visible rows (below): rebase window on its line
         if r >= editor_rows || buf.cursor > buf.top_byte + HUGE_WINDOW {
             buf.top_byte = prev_line_start(buf, (buf.cursor + 1).min(buf.len()), scratch);
-            starts = window_row_starts(buf, editor_rows + 1, scratch);
+            window_row_starts(buf, editor_rows + 1, scratch, starts);
             r = starts.iter().rposition(|&s| s <= buf.cursor).unwrap_or(0);
         }
         let r = r.min(editor_rows - 1);

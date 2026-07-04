@@ -1,6 +1,7 @@
 //! Buffer: one open file — piece chain + original + add store + newline
 //! index + cursor/viewport state. Byte-addressed throughout (spec §5–§7).
 
+use crate::lines::LineIndex;
 use crate::storage::{AddStore, OriginalFile, Piece, PieceChain, Src};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -9,12 +10,6 @@ pub const HUGE_THRESHOLD: u64 = 256 * 1024 * 1024;
 const BINARY_SNIFF: usize = 8 * 1024;
 /// Byte window used to reconstruct rows in huge/unindexed files.
 pub const HUGE_WINDOW: u64 = 64 * 1024;
-
-pub struct LineIndex {
-    /// Byte offset of each '\n', ascending.
-    pub newlines: Vec<u64>,
-    pub complete: bool,
-}
 
 /// Cooperative newline-index construction (spec §5.4 progressive open):
 /// the viewport shows immediately via the byte-window path; Ln/Col UX
@@ -71,6 +66,9 @@ pub struct Buffer {
     next_state_id: u64,
     /// (len, mtime) of the file on disk at open/save, for the save guard.
     disk_state: Option<(u64, std::time::SystemTime)>,
+    // reusable scratch (spec §4: no per-keypress allocation in hot paths)
+    parts_scratch: Vec<(Src, u64, u64)>,
+    small_scratch: Vec<u8>,
 }
 
 impl Buffer {
@@ -86,7 +84,7 @@ impl Buffer {
         if !path.exists() {
             // new file: empty buffer, created on save
             let mut b = Buffer::from_parts(None, Some(path.to_path_buf()), name);
-            b.line_index = Some(LineIndex { newlines: Vec::new(), complete: true });
+            b.line_index = Some(LineIndex::from_vec(Vec::new()));
             return Ok(b);
         }
         let mut orig = OriginalFile::open(path)?;
@@ -119,7 +117,7 @@ impl Buffer {
             original,
             adds: AddStore::new(),
             line_index: if len == 0 {
-                Some(LineIndex { newlines: Vec::new(), complete: true })
+                Some(LineIndex::from_vec(Vec::new()))
             } else {
                 None
             },
@@ -145,6 +143,8 @@ impl Buffer {
             saved_state_id: 0,
             next_state_id: 1,
             disk_state: None,
+            parts_scratch: Vec::new(),
+            small_scratch: Vec::new(),
         }
     }
 
@@ -173,11 +173,12 @@ impl Buffer {
     pub fn read_range(&mut self, start: u64, len: u64, out: &mut Vec<u8>) {
         // collect piece refs first: for_range borrows chain immutably while
         // reads need &mut original for the chunk cache
-        let mut parts: Vec<(Src, u64, u64)> = Vec::new();
+        let mut parts = std::mem::take(&mut self.parts_scratch);
+        parts.clear();
         self.chain.for_range(start, len, |p, off, take| {
             parts.push((p.src, p.start + off, take));
         });
-        for (src, s, l) in parts {
+        for &(src, s, l) in &parts {
             let r = match src {
                 Src::Orig => {
                     self.original.as_mut().expect("orig piece without file").read_into(s, l, out)
@@ -186,9 +187,10 @@ impl Buffer {
             };
             if r.is_err() {
                 self.io_error = true;
-                return;
+                break;
             }
         }
+        self.parts_scratch = parts;
     }
 
     fn build_line_index(&mut self) -> io::Result<()> {
@@ -210,7 +212,7 @@ impl Buffer {
                 return Err(io::ErrorKind::UnexpectedEof.into());
             }
         }
-        self.line_index = Some(LineIndex { newlines, complete: true });
+        self.line_index = Some(LineIndex::from_vec(newlines));
         Ok(())
     }
 
@@ -218,7 +220,7 @@ impl Buffer {
 
     pub fn line_count(&self) -> u64 {
         match &self.line_index {
-            Some(ix) => ix.newlines.len() as u64 + 1,
+            Some(ix) => ix.count() as u64 + 1,
             None => 1,
         }
     }
@@ -229,19 +231,19 @@ impl Buffer {
         if line == 0 {
             0
         } else {
-            ix.newlines[(line - 1) as usize] + 1
+            ix.get((line - 1) as usize) + 1
         }
     }
 
     /// Line end (exclusive of the '\n', or buffer end on the last line).
     pub fn line_end(&self, line: u64) -> u64 {
         let ix = self.line_index.as_ref().expect("line_end without index");
-        ix.newlines.get(line as usize).copied().unwrap_or(self.len())
+        ix.get_opt(line as usize).unwrap_or(self.len())
     }
 
     pub fn line_of_byte(&self, byte: u64) -> u64 {
         let ix = self.line_index.as_ref().expect("line_of_byte without index");
-        ix.newlines.partition_point(|&n| n < byte) as u64
+        ix.rank(byte) as u64
     }
 
     // --------------------------------------------------------- transactions
@@ -313,7 +315,7 @@ impl Buffer {
             spent += take;
         }
         if ib.pos >= len {
-            self.line_index = Some(LineIndex { newlines: ib.newlines, complete: true });
+            self.line_index = Some(LineIndex::from_vec(ib.newlines));
             true
         } else {
             self.index_build = Some(ib);
@@ -481,30 +483,27 @@ impl Buffer {
     fn patch_line_index(&mut self, start: u64, end: u64, inserted: &[u8]) {
         let Some(ix) = self.line_index.as_mut() else { return };
         let delta = inserted.len() as i64 - (end - start) as i64;
-        let lo = ix.newlines.partition_point(|&n| n < start);
-        let hi = ix.newlines.partition_point(|&n| n < end);
         let fresh: Vec<u64> = inserted
             .iter()
             .enumerate()
             .filter(|(_, &b)| b == b'\n')
             .map(|(i, _)| start + i as u64)
             .collect();
-        let fresh_len = fresh.len();
-        ix.newlines.splice(lo..hi, fresh);
-        // ponytail: O(lines-after) shift per edit; chunked index if S4
-        // profiling shows this dominating on million-line files
-        for n in &mut ix.newlines[lo + fresh_len..] {
-            *n = (*n as i64 + delta) as u64;
-        }
+        ix.patch(start, end, &fresh, delta);
     }
 
     // ------------------------------------------------------------- cursor
 
-    /// Bytes of one small probe window around a byte offset.
+    /// Bytes of one small probe window around a byte offset (reused buffer).
     fn probe(&mut self, start: u64, len: u64) -> Vec<u8> {
-        let mut v = Vec::with_capacity(len as usize);
+        let mut v = std::mem::take(&mut self.small_scratch);
+        v.clear();
         self.read_range(start, len, &mut v);
         v
+    }
+
+    fn probe_done(&mut self, v: Vec<u8>) {
+        self.small_scratch = v;
     }
 
     /// Next char boundary after cursor (escaped invalid bytes step 1).
@@ -520,6 +519,7 @@ impl Buffer {
             }
             Err(_) => 1,
         };
+        self.probe_done(w);
         pos + step as u64
     }
 
@@ -531,16 +531,19 @@ impl Buffer {
         let back = 4.min(pos);
         let w = self.probe(pos - back, back);
         // walk back to the last valid boundary in the window
+        let mut result = pos - 1;
         for k in 1..=w.len() {
             let s = &w[w.len() - k..];
             if std::str::from_utf8(s).is_ok() {
-                return pos - k as u64;
+                result = pos - k as u64;
+                break;
             }
             if k > 1 && (s[0] & 0xc0) != 0x80 {
                 break; // lead byte of an invalid sequence: single-byte step
             }
         }
-        pos - 1
+        self.probe_done(w);
+        result
     }
 }
 
@@ -587,9 +590,9 @@ mod tests {
         b.read_range(0, len, &mut out);
         assert_eq!(out, b"aa\nx\ny\nz\ncc\n");
         // rebuild index from scratch and compare with patched one
-        let patched = b.line_index.as_ref().unwrap().newlines.clone();
+        let patched = b.line_index.as_ref().unwrap().to_vec();
         b.build_line_index().unwrap();
-        assert_eq!(patched, b.line_index.as_ref().unwrap().newlines);
+        assert_eq!(patched, b.line_index.as_ref().unwrap().to_vec());
         std::fs::remove_file(&p).unwrap();
     }
 
@@ -661,9 +664,9 @@ mod tests {
         }
         assert!(!b.redo_group());
         // line index stays consistent throughout
-        let patched = b.line_index.as_ref().unwrap().newlines.clone();
+        let patched = b.line_index.as_ref().unwrap().to_vec();
         b.build_line_index().unwrap();
-        assert_eq!(patched, b.line_index.as_ref().unwrap().newlines);
+        assert_eq!(patched, b.line_index.as_ref().unwrap().to_vec());
         std::fs::remove_file(&p).unwrap();
     }
 
