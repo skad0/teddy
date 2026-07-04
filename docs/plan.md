@@ -49,7 +49,7 @@ exit checks, delegation, budget. Update checkboxes as stages land.
   Command palette with typed args, lazy tree picker, expand-on-search,
   root `.gitignore` subset, global ignore globs.
   *Exit:* open a nested file via picker in a repo; ignores respected.
-- [ ] **S7 — plugin host**
+- [x] **S7 — plugin host**
   Binary framed stdio protocol, handshake, request IDs, resource
   revisions, stale-drop, structured widgets, restart API.
   *Exit:* demo plugin renders a list widget and submits a validated

@@ -8,6 +8,7 @@ mod input;
 mod lex;
 mod lines;
 mod picker;
+mod plugin;
 mod render;
 mod search;
 mod storage;
@@ -141,6 +142,11 @@ enum Mode {
     Palette,
     /// Ctrl+O lazy tree file picker.
     Picker,
+    /// Structured list widget provided by an out-of-process plugin.
+    PluginWidget {
+        plugin: usize,
+        widget: u64,
+    },
 }
 
 /// Palette commands: (name, usage shown in the suggestion list).
@@ -152,8 +158,15 @@ const COMMANDS: &[(&str, &str)] = &[
     ("save-as", "save-as <path>"),
     ("reload", "reload from disk"),
     ("follow", "toggle follow mode"),
+    ("plugin-restart", "plugin-restart <name>"),
     ("quit", "quit"),
 ];
+
+struct PaletteMatch<'a> {
+    plugin: Option<usize>,
+    name: &'a str,
+    usage: &'a str,
+}
 
 #[derive(PartialEq, Clone, Copy)]
 enum PromptKind {
@@ -192,6 +205,9 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
     let mut picker_state: Option<picker::Picker> = None;
     let mut palette_sel = 0usize;
     let mut pick_top = 0usize;
+    let mut widget_sel = 0usize;
+    let mut plugins: Vec<plugin::Plugin> = Vec::new();
+    let mut next_plugin_request = 1u32;
 
     let mut frame = FrameBuf::new();
     let mut render_cache = RenderCache::new();
@@ -204,6 +220,9 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
     let mut status_left = String::new();
     let mut status_right = String::new();
     let mut scratch = Vec::new();
+    let mut poll_ready = Vec::new();
+    let mut plugin_ready = Vec::new();
+    let mut idle_ready = Vec::new();
     // owned tab snapshot, rebuilt only when a name/modified flag changes
     let mut tabs_buf: Vec<(String, bool)> = Vec::new();
     let mut out = std::io::stdout().lock();
@@ -222,6 +241,22 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
     }
     let mut watch_tokens: Vec<u64> = Vec::new();
 
+    if let Some(paths) = std::env::var_os("TEDDY_PLUGINS") {
+        for path in std::env::split_paths(&paths) {
+            if path.as_os_str().is_empty() {
+                continue;
+            }
+            match plugin::Plugin::spawn(&path) {
+                Ok(p) => plugins.push(p),
+                Err(e) => {
+                    status_msg.clear();
+                    let _ = write!(status_msg, "{}: plugin failed: {e}", path.display());
+                    dirty = true;
+                }
+            }
+        }
+    }
+
     loop {
         // spec §18: input drains before paint (zero timeout while dirty
         // or while cooperative jobs want their next slice)
@@ -229,10 +264,36 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
             || replace_job.is_some()
             || picker_state.as_ref().is_some_and(|p| p.wants_step())
             || buffers[active].index_build.is_some();
-        let timeout =
-            if dirty || jobs_active { 0 } else if parser.has_pending() { 10 } else { 250 };
-        let (stdin_ready, watch_ready) =
-            term::poll_stdin(watcher.as_ref().map(|w| w.fd()), timeout)?;
+        let timeout = if dirty || jobs_active {
+            0
+        } else if parser.has_pending() {
+            10
+        } else {
+            250
+        };
+        let has_watcher = watcher.is_some();
+        let stdin_ready = {
+            let mut poll_fds = Vec::new();
+            if let Some(w) = watcher.as_ref() {
+                poll_fds.push(w.fd());
+            }
+            for p in &plugins {
+                if p.alive {
+                    poll_fds.push(p.fd());
+                }
+            }
+            term::poll_stdin(&poll_fds, &mut poll_ready, timeout)?
+        };
+        let watch_ready = has_watcher && poll_ready.first().copied().unwrap_or(false);
+        plugin_ready.clear();
+        plugin_ready.resize(plugins.len(), false);
+        let mut ready_idx = usize::from(has_watcher);
+        for (i, p) in plugins.iter().enumerate() {
+            if p.alive {
+                plugin_ready[i] = poll_ready.get(ready_idx).copied().unwrap_or(false);
+                ready_idx += 1;
+            }
+        }
         if stdin_ready {
             let n = term::read_stdin(&mut read_buf)?;
             if n == 0 {
@@ -259,7 +320,9 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
             watch_tokens.clear();
             w.drain(&mut watch_tokens);
             for &t in &watch_tokens {
-                let Some(buf) = buffers.get_mut(t as usize) else { continue };
+                let Some(buf) = buffers.get_mut(t as usize) else {
+                    continue;
+                };
                 // re-arm FIRST: an atomic-replace writer left a new inode
                 // behind, and arming before the stat/reload means any write
                 // that lands after this line fires a fresh event (no
@@ -294,6 +357,74 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                     status_msg.clear();
                     let _ = write!(status_msg, "{}: file changed on disk", buf.name);
                 }
+                dirty = true;
+            }
+        }
+
+        for i in 0..plugins.len() {
+            if !plugin_ready.get(i).copied().unwrap_or(false) {
+                continue;
+            }
+            let before_count = plugins[i].widgets.len();
+            let before_max_revision = plugins[i]
+                .widgets
+                .values()
+                .map(|w| w.revision)
+                .max()
+                .unwrap_or(0);
+            let frames = plugins[i].pump();
+            let mut plugin_dirty = !frames.is_empty();
+            for frame in frames {
+                if frame.msg_type != plugin::EDIT_TX {
+                    continue;
+                }
+                let ok = handle_plugin_edit(&frame, buffers);
+                if ok {
+                    dirty = true;
+                    plugin_dirty = true;
+                }
+                plugins[i].send(&plugin::Frame {
+                    msg_type: plugin::EDIT_RESULT,
+                    flags: 0,
+                    request_id: frame.request_id,
+                    resource_id: frame.resource_id,
+                    resource_revision: buffers
+                        .get(frame.resource_id as usize)
+                        .map(|b| b.revision)
+                        .unwrap_or(0),
+                    payload: vec![u8::from(ok)],
+                });
+            }
+            if plugins[i].widgets.len() != before_count
+                || plugins[i]
+                    .widgets
+                    .values()
+                    .any(|w| w.revision > before_max_revision)
+            {
+                plugin_dirty = true;
+                if mode == Mode::Edit {
+                    if let Some((&widget, _)) =
+                        plugins[i].widgets.iter().max_by_key(|(_, w)| w.revision)
+                    {
+                        widget_sel = 0;
+                        mode = Mode::PluginWidget { plugin: i, widget };
+                    }
+                }
+            }
+            if !plugins[i].alive {
+                status_msg.clear();
+                let _ = write!(
+                    status_msg,
+                    "{}: plugin stopped (palette: plugin-restart)",
+                    plugins[i].name
+                );
+                plugin_dirty = true;
+            }
+            for notice in plugins[i].notices.drain(..) {
+                status_msg = notice;
+                plugin_dirty = true;
+            }
+            if plugin_dirty {
                 dirty = true;
             }
         }
@@ -459,15 +590,12 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                         Key::Down => palette_sel += 1,
                         Key::Tab => {
                             let tok = prompt.split_whitespace().next().unwrap_or("");
-                            let matches: Vec<_> = COMMANDS
-                                .iter()
-                                .copied()
-                                .filter(|(name, _)| prompt.is_empty() || name.starts_with(tok))
-                                .collect();
+                            let mut matches = Vec::new();
+                            collect_palette_matches(tok, prompt.is_empty(), &plugins, &mut matches);
                             if !matches.is_empty() {
                                 let i = palette_sel.min(matches.len() - 1);
                                 prompt.clear();
-                                prompt.push_str(matches[i].0);
+                                prompt.push_str(matches[i].name);
                                 prompt.push(' ');
                             }
                         }
@@ -477,18 +605,7 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                             let mut parts = line.splitn(2, char::is_whitespace);
                             let tok = parts.next().unwrap_or("");
                             let arg = parts.next().unwrap_or("").trim();
-                            let exact = COMMANDS.iter().find(|(name, _)| *name == tok);
-                            let cmd = if let Some((name, _)) = exact {
-                                Some(*name)
-                            } else {
-                                let mut hits = COMMANDS.iter().filter(|(name, _)| name.starts_with(tok));
-                                let first = hits.next().map(|(name, _)| *name);
-                                if first.is_some() && hits.next().is_none() {
-                                    first
-                                } else {
-                                    None
-                                }
-                            };
+                            let cmd = resolve_builtin_command(tok);
                             match cmd {
                                 Some("goto") => {
                                     if buffers[active].line_index.is_none() {
@@ -626,6 +743,28 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                                         status_msg.push_str("follow off");
                                     }
                                 }
+                                Some("plugin-restart") => {
+                                    if arg.is_empty() {
+                                        status_msg.push_str("plugin-restart <name>");
+                                    } else if let Some(p) =
+                                        plugins.iter_mut().find(|p| p.name == arg)
+                                    {
+                                        match p.restart() {
+                                            Ok(()) => {
+                                                let _ =
+                                                    write!(status_msg, "{arg}: plugin restarted");
+                                            }
+                                            Err(e) => {
+                                                let _ = write!(
+                                                    status_msg,
+                                                    "{arg}: restart failed: {e}"
+                                                );
+                                            }
+                                        }
+                                    } else {
+                                        let _ = write!(status_msg, "{arg}: no such plugin");
+                                    }
+                                }
                                 Some("quit") => {
                                     if buffers.iter().any(|b| b.modified()) {
                                         mode = Mode::ConfirmQuit;
@@ -633,8 +772,25 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                                         return Ok(());
                                     }
                                 }
-                                Some(_) | None => {
+                                Some(_) => {
                                     let _ = write!(status_msg, "unknown command: {tok}");
+                                }
+                                None => {
+                                    if let Some(pi) = resolve_plugin_command(tok, &plugins) {
+                                        let request_id = next_plugin_request;
+                                        next_plugin_request =
+                                            next_plugin_request.wrapping_add(1).max(1);
+                                        plugins[pi].send(&plugin::Frame {
+                                            msg_type: plugin::COMMAND_INVOKE,
+                                            flags: 0,
+                                            request_id,
+                                            resource_id: active as u64,
+                                            resource_revision: buffers[active].revision,
+                                            payload: arg.as_bytes().to_vec(),
+                                        });
+                                    } else {
+                                        let _ = write!(status_msg, "unknown command: {tok}");
+                                    }
                                 }
                             }
                         }
@@ -679,6 +835,41 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                                     Err(e) => {
                                         let _ = write!(status_msg, "{}: {e}", path.display());
                                     }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+                Mode::PluginWidget { plugin: pi, widget } => {
+                    let item_count = plugins
+                        .get(pi)
+                        .and_then(|p| p.widgets.get(&widget))
+                        .map(|w| w.items.len())
+                        .unwrap_or(0);
+                    match k {
+                        Key::Esc => mode = Mode::Edit,
+                        Key::Up => widget_sel = widget_sel.saturating_sub(1),
+                        Key::Down => {
+                            widget_sel = (widget_sel + 1).min(item_count.saturating_sub(1));
+                        }
+                        Key::Enter => {
+                            if item_count > 0 {
+                                widget_sel = widget_sel.min(item_count - 1);
+                                if let Some(p) = plugins.get_mut(pi) {
+                                    p.send(&plugin::Frame {
+                                        msg_type: plugin::WIDGET_EVENT,
+                                        flags: 0,
+                                        request_id: 0,
+                                        resource_id: widget,
+                                        resource_revision: p
+                                            .widgets
+                                            .get(&widget)
+                                            .map(|w| w.revision)
+                                            .unwrap_or(0),
+                                        payload: (widget_sel as u32).to_le_bytes().to_vec(),
+                                    });
                                 }
                             }
                         }
@@ -817,7 +1008,7 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
         }
 
         // cooperative work slice (spec §18): runs only when input is idle
-        if !term::poll_stdin(None, 0)?.0 {
+        if !term::poll_stdin(&[], &mut idle_ready, 0)? {
             if let Some(s) = &mut search_job {
                 let buf = &mut buffers[active];
                 match s.step(buf, SLICE, &mut job_scratch) {
@@ -881,7 +1072,7 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
             }
         }
 
-        if dirty && !term::poll_stdin(None, 0)?.0 {
+        if dirty && !term::poll_stdin(&[], &mut idle_ready, 0)? {
             let buf = &mut buffers[active];
             let cursor_screen = build_view(
                 buf,
@@ -922,23 +1113,29 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                     status_left.clear();
                     let _ = write!(status_left, " > {prompt}");
                     let tok = prompt.split_whitespace().next().unwrap_or("");
-                    let matches: Vec<_> = COMMANDS
-                        .iter()
-                        .copied()
-                        .filter(|(name, _)| prompt.is_empty() || name.starts_with(tok))
-                        .collect();
+                    let mut matches = Vec::new();
+                    collect_palette_matches(tok, prompt.is_empty(), &plugins, &mut matches);
                     if !matches.is_empty() {
                         palette_sel = palette_sel.min(matches.len() - 1);
                     }
                     let shown = matches.len().min(8).min(editor_rows as usize);
                     let base = editor_rows as usize - shown;
-                    for (i, (name, usage)) in matches.iter().take(shown).enumerate() {
+                    for (i, m) in matches.iter().take(shown).enumerate() {
                         let row = &mut row_store[base + i];
                         row.clear();
                         // ponytail: command palette paints are not a hot path.
-                        row.extend_from_slice(format!("{name}  — {usage}").as_bytes());
-                        row_sel[base + i] =
-                            if i == palette_sel { Some((0, row.len())) } else { None };
+                        if let Some(pi) = m.plugin {
+                            row.extend_from_slice(
+                                format!("{}  — plugin: {}", m.name, plugins[pi].name).as_bytes(),
+                            );
+                        } else {
+                            row.extend_from_slice(format!("{}  — {}", m.name, m.usage).as_bytes());
+                        }
+                        row_sel[base + i] = if i == palette_sel {
+                            Some((0, row.len()))
+                        } else {
+                            None
+                        };
                     }
                 }
                 Mode::Picker => {
@@ -966,6 +1163,28 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                                 row_store[i].push(b'/');
                             }
                             if pick_top + i == p.sel {
+                                row_sel[i] = Some((0, row_store[i].len()));
+                            }
+                        }
+                    }
+                }
+                Mode::PluginWidget { plugin: pi, widget } => {
+                    status_left.clear();
+                    if let Some(p) = plugins.get(pi) {
+                        let _ = write!(status_left, " {} widget  Enter select  Esc close", p.name);
+                    } else {
+                        status_left.push_str(" plugin widget  Enter select  Esc close");
+                    }
+                    for i in 0..editor_rows as usize {
+                        row_store[i].clear();
+                        row_sel[i] = None;
+                        if let Some(item) = plugins
+                            .get(pi)
+                            .and_then(|p| p.widgets.get(&widget))
+                            .and_then(|w| w.items.get(i))
+                        {
+                            row_store[i].extend_from_slice(item.as_bytes());
+                            if i == widget_sel {
                                 row_sel[i] = Some((0, row_store[i].len()));
                             }
                         }
@@ -1015,6 +1234,92 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
             perf.frame_end(frame.as_bytes().len());
         }
     }
+}
+
+fn collect_palette_matches<'a>(
+    tok: &str,
+    include_all: bool,
+    plugins: &'a [plugin::Plugin],
+    out: &mut Vec<PaletteMatch<'a>>,
+) {
+    out.clear();
+    out.extend(
+        COMMANDS
+            .iter()
+            .filter(|(name, _)| include_all || name.starts_with(tok))
+            .map(|(name, usage)| PaletteMatch {
+                plugin: None,
+                name,
+                usage,
+            }),
+    );
+    for (pi, p) in plugins.iter().enumerate() {
+        for name in &p.commands {
+            if include_all || name.starts_with(tok) {
+                out.push(PaletteMatch {
+                    plugin: Some(pi),
+                    name,
+                    usage: "",
+                });
+            }
+        }
+    }
+}
+
+fn resolve_builtin_command(tok: &str) -> Option<&'static str> {
+    if tok.is_empty() {
+        return None;
+    }
+    if let Some((name, _)) = COMMANDS.iter().find(|(name, _)| *name == tok) {
+        return Some(*name);
+    }
+    let mut hits = COMMANDS.iter().filter(|(name, _)| name.starts_with(tok));
+    let first = hits.next().map(|(name, _)| *name);
+    if first.is_some() && hits.next().is_none() {
+        first
+    } else {
+        None
+    }
+}
+
+fn resolve_plugin_command(tok: &str, plugins: &[plugin::Plugin]) -> Option<usize> {
+    if tok.is_empty() {
+        return None;
+    }
+    let mut hit = None;
+    for (pi, p) in plugins.iter().enumerate() {
+        for name in &p.commands {
+            if name == tok || name.starts_with(tok) {
+                if hit.is_some() {
+                    return None;
+                }
+                hit = Some(pi);
+            }
+        }
+    }
+    hit
+}
+
+fn handle_plugin_edit(frame: &plugin::Frame, buffers: &mut [Buffer]) -> bool {
+    let Ok(idx) = usize::try_from(frame.resource_id) else {
+        return false;
+    };
+    let Some(buf) = buffers.get_mut(idx) else {
+        return false;
+    };
+    if frame.resource_revision != buf.revision || frame.payload.len() < 16 || buf.readonly {
+        return false;
+    }
+
+    let start = u64::from_le_bytes(frame.payload[0..8].try_into().unwrap());
+    let end = u64::from_le_bytes(frame.payload[8..16].try_into().unwrap());
+    if start > end || end > buf.len() {
+        return false;
+    }
+
+    buf.group_counter += 1;
+    let group = buf.group_counter;
+    buf.replace(start, end, &frame.payload[16..], group).is_ok()
 }
 
 /// Dev-only frame timing + allocation counting (spec §20: perf tracing in
