@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Execution plan
+    url: https://github.com/skad0/teddy/blob/main/docs/plan.md
+    about: Stage work is tracked in docs/plan.md — check it before filing.
