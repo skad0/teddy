@@ -53,7 +53,10 @@ not delete the old payload. The manager cannot self-manage and has no sandbox,
 signature, or self-update behavior.
 
 See [configuration](docs/config-spec.md), the [manager guide](docs/plugin-manager.md),
-and the [launcher contract](docs/plugin-contract.md) for setup and operation.
+[plugin recipes](docs/plugin-recipes.md), and the
+[launcher contract](docs/plugin-contract.md) for setup and operation. Repository
+maintainers should also read the [plugin repository contract](docs/plugin-repository-contract.md);
+the [manifest reference](docs/plugin-manifest.md) remains normative.
 
 ## Releases
 
