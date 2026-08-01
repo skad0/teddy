@@ -2303,6 +2303,15 @@ fn proto_io(e: plugin::ProtoError) -> io::Error {
 mod tests {
     use super::*;
     static TEST_ROOTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    fn test_root(label: &str) -> std::path::PathBuf {
+        let base = std::fs::canonicalize(std::env::temp_dir())
+            .expect("test temporary directory must be available");
+        base.join(format!(
+            "teddy-manager-ui-test-{label}-{}-{}",
+            std::process::id(),
+            TEST_ROOTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ))
+    }
     fn test_target(action: Action) -> Target {
         Target {
             action,
@@ -2333,12 +2342,7 @@ mod tests {
         t
     }
     fn verified_demo(action: Action) -> (App, Target, std::path::PathBuf) {
-        let root = std::path::PathBuf::from("/private/tmp").join(format!(
-            "teddy-ui-state-{}-{}-{}",
-            std::process::id(),
-            action as u8,
-            TEST_ROOTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        ));
+        let root = test_root(&format!("ui-state-{}", action as u8));
         let _ = fs::remove_dir_all(&root);
         let paths = ManagerPaths {
             config: root.join("config"),
@@ -2666,8 +2670,7 @@ mod tests {
 
     #[test]
     fn existing_record_must_match_the_exact_verified_payload_path() {
-        let root = std::path::PathBuf::from("/private/tmp")
-            .join(format!("teddy-ui-enable-{}", std::process::id()));
+        let root = test_root("ui-enable");
         let _ = fs::remove_dir_all(&root);
         let paths = ManagerPaths {
             config: root.join("config"),
@@ -2799,8 +2802,7 @@ mod tests {
 
     #[test]
     fn remove_exact_delegates_to_manager_and_handles_not_found() {
-        let root = std::path::PathBuf::from("/private/tmp")
-            .join(format!("teddy-ui-remove-{}", std::process::id()));
+        let root = test_root("ui-remove");
         let _ = fs::remove_dir_all(&root);
         let paths = ManagerPaths {
             config: root.join("config"),

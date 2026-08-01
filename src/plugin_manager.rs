@@ -1882,6 +1882,17 @@ impl Sha256 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_root(label: &str) -> PathBuf {
+        let base = std::fs::canonicalize(std::env::temp_dir())
+            .expect("test temporary directory must be available");
+        base.join(format!(
+            "teddy-manager-test-{label}-{}-{}",
+            std::process::id(),
+            TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
     fn commit() -> &'static str {
         "0123456789abcdef0123456789abcdef01234567"
     }
@@ -1925,7 +1936,7 @@ mod tests {
     fn paths_are_validated() {
         let p = ManagerPaths::from_values(
             None,
-            Some(PathBuf::from("/private/tmp/data")),
+            Some(test_root("paths-data")),
             None,
             Some(PathBuf::from("/h")),
         )
@@ -1943,8 +1954,7 @@ mod tests {
     }
     #[test]
     fn receipt_round_trip_and_lock_contention() {
-        let root =
-            PathBuf::from("/private/tmp").join(format!("teddy-manager-{}", std::process::id()));
+        let root = test_root("manager");
         fs::create_dir_all(&root).unwrap();
         let rpath = root.join("receipt");
         let r = Receipt {
@@ -2023,10 +2033,7 @@ mod tests {
 
     #[test]
     fn payload_and_stale_recovery_are_conservative() {
-        let root = PathBuf::from("/private/tmp").join(format!(
-            "teddy-recover-{}",
-            TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-        ));
+        let root = test_root("recover");
         let data = root.join("data");
         fs::create_dir_all(data.join(".staging-alpha-0123456789abcdef0123456789abcdef01234567-1"))
             .unwrap();
@@ -2050,10 +2057,7 @@ mod tests {
 
     #[test]
     fn digest_and_journal_are_deterministic_and_bounded() {
-        let root = PathBuf::from("/private/tmp").join(format!(
-            "teddy-journal-{}",
-            TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-        ));
+        let root = test_root("journal");
         fs::create_dir_all(&root).unwrap();
         let payload = root.join("payload");
         fs::write(&payload, b"abc").unwrap();
@@ -2075,10 +2079,7 @@ mod tests {
 
     #[test]
     fn manager_paths_reject_symlink_components() {
-        let root = PathBuf::from("/private/tmp").join(format!(
-            "teddy-link-{}",
-            TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-        ));
+        let root = test_root("link");
         fs::create_dir_all(&root).unwrap();
         let target = root.join("real");
         fs::create_dir(&target).unwrap();
@@ -2099,10 +2100,7 @@ mod tests {
 
     #[test]
     fn active_removal_trash_is_not_orphan_cleaned_before_source_validation() {
-        let root = PathBuf::from("/private/tmp").join(format!(
-            "teddy-active-trash-{}",
-            TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-        ));
+        let root = test_root("active-trash");
         let paths = ManagerPaths {
             config: root.join("config"),
             data: root.join("data"),
@@ -2133,10 +2131,7 @@ mod tests {
 
     #[test]
     fn update_transaction_journals_stages_and_retains_both_versions() {
-        let root = PathBuf::from("/private/tmp").join(format!(
-            "teddy-update-{}",
-            TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-        ));
+        let root = test_root("update");
         let paths = ManagerPaths {
             config: root.join("config"),
             data: root.join("data"),
@@ -2200,10 +2195,7 @@ mod tests {
 
     #[test]
     fn active_update_blocks_ordinary_removal_and_state_mutation() {
-        let root = PathBuf::from("/private/tmp").join(format!(
-            "teddy-update-guard-{}",
-            TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-        ));
+        let root = test_root("update-guard");
         let paths = ManagerPaths {
             config: root.join("config"),
             data: root.join("data"),
@@ -2249,10 +2241,7 @@ mod tests {
 
     #[test]
     fn malformed_update_journal_is_refused_without_cleanup() {
-        let root = PathBuf::from("/private/tmp").join(format!(
-            "teddy-update-bad-{}",
-            TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-        ));
+        let root = test_root("update-bad");
         let paths = ManagerPaths {
             config: root.join("c"),
             data: root.join("data"),
@@ -2275,10 +2264,7 @@ mod tests {
     }
 
     fn removal_fixture(tag: &str) -> (PathBuf, ManagerPaths, Receipt) {
-        let root = PathBuf::from("/private/tmp").join(format!(
-            "teddy-remove-{tag}-{}",
-            TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-        ));
+        let root = test_root(&format!("remove-{tag}"));
         let paths = ManagerPaths {
             config: root.join("config"),
             data: root.join("data"),
