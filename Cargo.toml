@@ -1,7 +1,30 @@
 [package]
-name = "teddy"
-version = "0.1.0"
+name = "teddytor"
+version = "0.2.0"
 edition = "2021"
+readme = "README.md"
+description = "A small, byte-addressed terminal text editor"
+repository = "https://github.com/skad0/teddy"
+homepage = "https://github.com/skad0/teddy"
+documentation = "https://docs.rs/teddytor"
+license = "MIT OR Apache-2.0"
+keywords = ["terminal", "editor", "text-editor"]
+categories = ["command-line-utilities", "text-editors"]
+exclude = [
+    ".github/**",
+    ".slim/**",
+    ".claude/**",
+    ".ignore",
+    "CLAUDE.md",
+    "docs/plan.md",
+    "docs/raw_spec.md",
+    "docs/bench_plan.md",
+    "docs/ui_handoff_from_stiches.md",
+]
+
+[[bin]]
+name = "teddy"
+path = "src/main.rs"
 
 [dependencies]
 # spec §3: minimal rustix-style Unix syscall access is the one allowed category

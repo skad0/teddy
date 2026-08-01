@@ -44,8 +44,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "teddy"
-version = "0.1.0"
+name = "teddytor"
+version = "0.2.0"
 dependencies = [
  "rustix",
 ]

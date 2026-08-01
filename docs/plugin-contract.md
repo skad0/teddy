@@ -1,124 +1,130 @@
-# Plugin contract (out-of-process plugin protocol)
+# Plugin contract
 
-This document describes the plugin protocol used by teddy. It is implemented in src/plugin.rs. Important constants:
+Plugins are independent executables. The core is an out-of-process runtime
+launcher and registry, not a package manager. The bundled `teddy-manager` is a
+separately launched binary, enabled only when `TEDDY_PLUGIN_MANAGER` is an
+existing absolute executable. The core does no Git or package work and never
+accepts shell, argv, Git, or package authority.
 
-- PROTO_VERSION = 1
-- MAX_PAYLOAD = 1 << 20 (1 MiB)
-- Message types (u16):
-  - HELLO = 1
-  - REGISTER_COMMAND = 2
-  - COMMAND_INVOKE = 3
-  - WIDGET = 4
-  - WIDGET_EVENT = 5
-  - EDIT_TX = 6
-  - EDIT_RESULT = 7
-  - STATUS = 8
-  - VIEWPORT = 9
-  - SPANS = 10
+The canonical implementation is [`src/plugin.rs`](../src/plugin.rs).
 
-See the code reference for the canonical definitions:
-src/plugin.rs: https://github.com/skad0/teddy/blob/ed2614cbcdf2f1bf2b02df6d70e89e929026b200/src/plugin.rs#L8-L20
+## v1 framing and handshake
 
-Frame format (binary, little-endian)
-- header (28 bytes total):
-  - payload_len: u32 (4 bytes)
-  - msg_type: u16 (2 bytes)
-  - flags: u16 (2 bytes)
-  - request_id: u32 (4 bytes)
-  - resource_id: u64 (8 bytes)
-  - resource_revision: u64 (8 bytes)
-- payload: payload_len bytes (must be <= MAX_PAYLOAD)
+Frames are little-endian with a 28-byte header: `payload_len: u32`,
+`msg_type: u16`, `flags: u16`, `request_id: u32`, `resource_id: u64`, and
+`resource_revision: u64`, followed by the payload. `PROTO_VERSION` is `1` and
+`MAX_PAYLOAD` is 1 MiB. The existing message types are 1–10; launcher types
+are reserved v1 types:
 
-The editor uses little-endian encoding. Plugins must follow the same.
+| Type | Constant | Direction |
+|---:|---|---|
+| 11 | `LAUNCHER_REQUEST` | manager → core |
+| 12 | `LAUNCHER_RESPONSE` | core → manager |
+| 13 | `LAUNCHER_EVENT` | core → manager |
 
-Handshake
-- On spawn, the editor sends a HELLO frame with payload = u32(PROTO_VERSION) (4 bytes).
-- Plugin must reply with HELLO and the same payload (u32(PROTO_VERSION)). If not accepted, the editor will terminate the plugin.
-- On successful HELLO, plugin may set flags in editor HELLO response; currently the editor checks flags & 0x1 to decide whether plugin wants viewport frames.
+The core sends `HELLO` with the four-byte little-endian protocol version.
+Plugins must reply with the same valid `HELLO` within two seconds. Contributions
+are accepted only after this handshake. The response flag `0x1` requests
+viewport frames.
 
-Working model
-- Plugins are independent executables whose stdin/stdout are used for framed communication.
-- The editor sets plugin stdout & stdin to non-blocking mode, and the editor will:
-  - Send frames to plugin stdin (blocking write used in current impl).
-  - Read frames from plugin stdout (non-blocking).
-- Plugins must drain stdin and read stdout timely. The editor enforces a per-tick read budget and may kill unresponsive plugins.
+Observed lifecycle states are `Starting`, `Running`, `Stopping`, `Backoff`,
+and `Failed`. Unexpected failures use a bounded geometric retry schedule based
+on persisted `backoff_ms` (`base`, `4×base`, `16×base`), with at most
+`max_restarts` retries; `max_restarts: 0` disables retries. Invalid frames and
+unauthorized launcher requests stop the offending slot.
 
-Common messages and payload structure
+## Launcher lane
 
-1) REGISTER_COMMAND (Plugin -> Editor)
-- payload: UTF-8 string (command name)
-- The plugin registers commands which will appear in the editor palette.
+Only the active stable slot `teddy.manager` may send `LAUNCHER_REQUEST`; it
+cannot control itself. Other senders are stopped. Operations are exactly
+`List`, `Enable`, `Disable`, `Reload`, and `Forget`.
 
-2) COMMAND_INVOKE (Editor -> Plugin)
-- resource_id: index of buffer
-- payload: argument bytes (UTF-8 string)
-- plugins receive this to perform work or open widgets.
+The manager's catalog and installed inventory are local manager data, not core
+registry data. Manager lifecycle actions use explicit cancel-first confirmation.
+They mutate desired registry state with `Enable` or `Disable`, then observe
+the result using bounded `List` polling; desired state and observed process
+state must not be conflated. Launcher events are advisory until the correlated
+operation response is received. Safe remove is ordered: `Disable`, bounded
+`List` polling until absence or disabled `Failed` (fully reaped), `Forget`, then
+journaled removal of the exact receipt/digest/path-matched immutable version.
+The manager cannot send these operations for `teddy.manager`.
 
-3) VIEWPORT (Editor -> Plugin)
-- payload format used by the editor (see viewport_payload in src/main.rs). It is:
-  - name_len: u16
-  - name: bytes
-  - row_count: u16
-  - for each row:
-    - len: u16
-    - row bytes (raw bytes to be rendered/clipped by plugin)
-- Plugins that declared "wants_viewport" will get VIEWPORT frames referencing a buffer revision.
+`Update` is a manager orchestration, not an additional launcher operation. It is
+explicit and confirmation-gated, and is offered only for an enabled exact
+manager-installed payload whose receipt, SHA-256 digest, and canonical launcher
+path match. The candidate must be a different exact catalog commit. The manager
+installs it side-by-side with the constrained Git path, durably stages the
+transaction, disables/reaps/forgets the old record, then enables and bounded-
+polls the candidate. Candidate failure or timeout starts exact old-payload
+rollback; both immutable payloads remain. Disabled, external, ambiguous,
+mismatched, self, and same-commit targets are refused.
 
-4) SPANS (Plugin -> Editor)
-- parse_spans expects:
-  - row_count: u16
-  - For each row:
-    - row_idx: u16
-    - span_count: u16
-    - For each span:
-      - start: u16
-      - len: u16
-      - style: u8
-- Spans are used to provide syntax highlighting / decorations for rows in the viewport. (style is a small numeric style index; theme mapping documented in docs/theme-spec.md)
+Pending update journals are reconciled at startup/refresh only from correlated
+launcher `List` state. A failed stage write or compensation retains the journal
+and reports safe failure. This is not automatic updating: the manager does not
+build, run hooks or dependencies, delete old payloads, sandbox, verify
+signatures, or update itself.
 
-5) WIDGET (Plugin -> Editor)
-- A plugin may send widget frames to populate structured lists in the editor UI.
-- Widget payload:
-  - kind: u8
-  - count: u16
-  - For each item:
-    - len: u16
-    - bytes (UTF-8, control bytes are sanitized by the editor)
-- Editor keeps widgets keyed by a resource id (u64) and revision (u64).
+Manager Git operations are fixed and bounded: each command has a 30-second
+timeout, stdout and stderr are each capped at 8 MiB, tree parsing accepts at
+most 16,384 records, each distinct blob is at most 64 MiB, and materialized
+blob bytes summed across tree records are at most 256 MiB. These limits are
+validation limits, not claims about network speed or sandboxing.
 
-6) EDIT_TX (Plugin -> Editor)
-- Used by plugins to request textual edits in a buffer.
-- Payload:
-  - start: u64 (8 bytes, LE)
-  - end: u64 (8 bytes, LE)
-  - remaining: replacement data bytes
-- Editor applies the replacement only if resource_revision matches the buffer revision and other validation passes. Editor responds with EDIT_RESULT.
+The following is the exact payload codec in `src/plugin.rs`:
 
-7) EDIT_RESULT (Editor -> Plugin)
-- Editor uses this to indicate success/failure of an EDIT_TX. The payload is a single byte (0 or 1) in current code.
+* Request tag `0` is `List`, followed by `page: u16` (little-endian). Page
+  numbering starts at zero; an out-of-range page is rejected.
+* Request tag `1` is `Enable`: a length-prefixed ID (`u8` length plus UTF-8
+  bytes), then a descriptor marker. Marker `0` is ID-only enable for an
+  existing record. Marker `1` is a descriptor containing a `u16`-length UTF-8
+  path, `u32 max_restarts`, `u32 backoff_ms`, and a confirmation byte (`0` or
+  `1`). It is required for a new record. While registry recovery is pending,
+  only a descriptor with confirmation `1` may mutate the registry; ordinary
+  mutations are rejected.
+* Request tags `2`, `3`, and `4` are `Disable`, `Reload`, and `Forget`, each
+  followed by the length-prefixed ID.
 
-8) STATUS (Plugin -> Editor) 
-- payload: UTF-8 message; editor will display notices (sanitizing control bytes).
+IDs are at most 64 bytes, begin with a lowercase ASCII letter or digit, and
+then contain only lowercase ASCII letters, digits, `.`, `_`, or `-`. The
+`teddy.*` namespace is reserved for core slots. Descriptor paths are bounded
+absolute executable paths.
 
-Error handling & size limits
-- Plugin frames with payload_len > MAX_PAYLOAD or malformed frames are rejected and the plugin is killed.
-- Plugins must follow framing exactly; partial frames are buffered and parsed when complete.
+Response tag `0` is `List`: `page: u16`, `next_page: u16` (`65535` means no
+next page), then a `u16` count followed by records. The host emits bounded
+pages of 32 records. Each record is
+the length-prefixed ID, a `u16`-length UTF-8 path, an enabled byte, an observed
+lifecycle-state byte, and `u32 max_restarts` plus `u32 backoff_ms`. Host state
+codes are `0 Starting`, `1 Running`, `2 Stopping`, `3 Backoff`, and `4
+Failed`; a registry record without an active runtime slot is reported as
+`Failed`. Response tags `1`–`4` report the successful operation and ID. Tag
+`255` carries a bounded `u16`-length UTF-8 error. Events use tags `1`–`4` for
+successful state changes and carry an ID.
 
-Practical guidelines for plugin authors
-- Implement the framed protocol: read from stdin, write to stdout.
-- Reply to HELLO with PROTO_VERSION (u32 LE).
-- Register commands via REGISTER_COMMAND (UTF-8 payload).
-- Avoid blocking reads/writes for long periods. Editor uses non-blocking IO and a read budget per tick.
-- When sending WIDGET or SPANS ensure payloads are well-formed (editor rejects malformed).
-- Respect resource_revision when performing edit requests (EDITOR will only apply edits if revision matches).
-- Use small payloads where possible; viewport frames already limit line lengths when generated by the editor.
+All launcher payloads are bounded and reject malformed, unknown, non-UTF-8,
+or trailing data. Enable persists desired registry state before launching;
+Forget requires a disabled, fully reaped record. A confirmed recovery save is
+one-shot: after it commits, ordinary mutations use normal generation conflict
+checking again. A save that commits but reports a directory durability warning
+still keeps the runtime mutation, success response, and success event; the
+warning is surfaced separately and is not retried. Desired registry state and
+observed process state are distinct.
 
-Example: simple HELLO reply frame encoding (pseudo-Rust)
-```text
-payload = PROTO_VERSION (4 bytes LE)
-header: payload_len=4, msg_type=HELLO, flags=0, request_id=0, resource_id=0, resource_revision=0
-then 4-byte payload
-```
+An explicit manager `Reload`, and recreation after `Forget`, reset retry
+accounting and apply the current persisted executable and restart policy.
 
-See src/plugin.rs for canonical encoding/parsing functions and tests:
-https://github.com/skad0/teddy/blob/ed2614cbcdf2f1bf2b02df6d70e89e929026b200/src/plugin.rs
+## Runtime safety
+
+Registry and legacy slots are ordered and stable. On every transition away
+from `Running`, the core closes that slot's widget mode and clears only its
+owned contributions, viewport interest, and spans for that process generation.
+The core resets viewport delivery when a slot becomes `Running` again.
+
+Plugin stdin, stdout, and stderr are nonblocking. Stderr is polled and drained
+after input under an aggregate bounded budget; lossy UTF-8 conversion replaces
+control characters, including C0, C1, ESC, and DEL. Pre-HELLO stderr is not
+shown as a notice. Oversized or malformed normal frames are rejected.
+
+The existing messages remain unchanged: `REGISTER_COMMAND`, `COMMAND_INVOKE`,
+`VIEWPORT`, `SPANS`, `WIDGET`, `EDIT_TX`, `EDIT_RESULT`, and `STATUS` retain
+their v1 meanings and payloads documented by the source implementation.

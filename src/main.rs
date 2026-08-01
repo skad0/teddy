@@ -9,6 +9,7 @@ mod lex;
 mod lines;
 mod picker;
 mod plugin;
+mod plugin_registry;
 mod render;
 mod search;
 mod storage;
@@ -18,10 +19,45 @@ mod watch;
 use buffer::{Buffer, HUGE_WINDOW};
 use input::{Key, Parser};
 use render::{FrameBuf, RenderCache, View};
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+
+fn registry_config_path() -> Option<PathBuf> {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+        .map(|p| p.join("teddy").join("plugins.bin"))
+}
+
+fn durability_warning(outcome: plugin_registry::SaveOutcome) -> Option<String> {
+    match outcome {
+        plugin_registry::SaveOutcome::Durable => None,
+        plugin_registry::SaveOutcome::CommittedWithWarning { error } => Some(error.to_string()),
+    }
+}
+
+fn manager_executable(value: &std::ffi::OsStr) -> Result<PathBuf, &'static str> {
+    let path = PathBuf::from(value);
+    if !path.is_absolute() {
+        return Err("manager path must be absolute");
+    }
+    let metadata =
+        std::fs::metadata(&path).map_err(|_| "manager path is not a regular executable")?;
+    if !metadata.is_file() {
+        return Err("manager path is not a regular executable");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o111 == 0 {
+            return Err("manager path is not executable");
+        }
+    }
+    Ok(path)
+}
 
 struct Args {
     workspace: Option<PathBuf>,
@@ -30,7 +66,11 @@ struct Args {
 }
 
 fn parse_args() -> Result<Args, String> {
-    let mut args = Args { workspace: None, files: Vec::new(), follow: false };
+    let mut args = Args {
+        workspace: None,
+        files: Vec::new(),
+        follow: false,
+    };
     let mut it = std::env::args_os().skip(1);
     while let Some(a) = it.next() {
         match a.to_str() {
@@ -53,7 +93,10 @@ fn parse_args() -> Result<Args, String> {
     // spec §17: directories as positional args are rejected unless -w
     for f in &args.files {
         if f.is_dir() {
-            return Err(format!("{}: is a directory (use -w to open a workspace)", f.display()));
+            return Err(format!(
+                "{}: is a directory (use -w to open a workspace)",
+                f.display()
+            ));
         }
     }
     Ok(args)
@@ -124,6 +167,438 @@ fn main() -> ExitCode {
     }
 }
 
+/// Resolve the first-party plugin as an executable sibling, without shelling
+/// out. Cargo builds and installed deployments use this layout.
+fn bundled_highlighter_path(executable: &Path) -> PathBuf {
+    executable
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(format!("teddy-highlight{}", std::env::consts::EXE_SUFFIX))
+}
+
+fn configured_highlighter(paths: &[PathBuf], bundled: &Path) -> bool {
+    let bundled_canonical = std::fs::canonicalize(bundled).ok();
+    paths.iter().any(|path| {
+        if path.file_name() == bundled.file_name() {
+            return true;
+        }
+        match (&bundled_canonical, std::fs::canonicalize(path).ok()) {
+            (Some(bundled), Some(path)) => bundled == &path,
+            _ => false,
+        }
+    })
+}
+
+fn plugin_paths() -> Vec<(PathBuf, bool)> {
+    let mut paths: Vec<PathBuf> = std::env::var_os("TEDDY_PLUGINS")
+        .map(|value| {
+            std::env::split_paths(&value)
+                .filter(|p| !p.as_os_str().is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut result: Vec<(PathBuf, bool)> = paths.drain(..).map(|path| (path, false)).collect();
+    if let Ok(executable) = std::env::current_exe() {
+        let bundled = bundled_highlighter_path(&executable);
+        let configured = result
+            .iter()
+            .map(|(path, _)| path.clone())
+            .collect::<Vec<_>>();
+        if bundled.is_file() && !configured_highlighter(&configured, &bundled) {
+            result.push((bundled, true));
+        }
+    }
+    result
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LauncherAction {
+    Enable,
+    Disable,
+    Reload,
+    Forget,
+}
+
+fn dispatch_launcher_request(
+    registry: &mut plugin_registry::Registry,
+    request: &plugin::LauncherRequest,
+    manager_path: Option<&Path>,
+    recovery_required: bool,
+    observed: Option<&HashMap<String, u8>>,
+) -> Result<
+    (
+        plugin::LauncherResponse,
+        Option<LauncherAction>,
+        Option<String>,
+    ),
+    String,
+> {
+    let mut confirmed_recovery = false;
+    if recovery_required && !matches!(request, plugin::LauncherRequest::List { .. }) {
+        confirmed_recovery = matches!(
+            request,
+            plugin::LauncherRequest::Enable {
+                descriptor: Some(plugin::LauncherDescriptor {
+                    confirm_recovery: true,
+                    ..
+                }),
+                ..
+            }
+        );
+        if !confirmed_recovery {
+            return Err("registry recovery requires explicit confirmation".into());
+        }
+    }
+    let id = match request {
+        plugin::LauncherRequest::List { page } => {
+            const PAGE_SIZE: usize = 32;
+            let start = (*page as usize).saturating_mul(PAGE_SIZE);
+            if start > registry.list().len() {
+                return Err("launcher list page out of range".into());
+            }
+            let end = (start + PAGE_SIZE).min(registry.list().len());
+            return Ok((
+                plugin::LauncherResponse::List {
+                    page: *page,
+                    next_page: (end < registry.list().len()).then_some(page.saturating_add(1)),
+                    records: registry.list()[start..end]
+                        .iter()
+                        .map(|r| plugin::LauncherRecord {
+                            id: r.id.to_string(),
+                            path: r.path.to_string_lossy().into_owned(),
+                            enabled: r.enabled,
+                            state: observed
+                                .and_then(|states| states.get(r.id.as_str()).copied())
+                                .unwrap_or(4),
+                            max_restarts: r.restart.max_restarts,
+                            backoff_ms: r.restart.backoff_ms,
+                        })
+                        .collect(),
+                },
+                None,
+                None,
+            ));
+        }
+        plugin::LauncherRequest::Enable { id, .. }
+        | plugin::LauncherRequest::Disable(id)
+        | plugin::LauncherRequest::Reload(id)
+        | plugin::LauncherRequest::Forget(id) => id,
+    };
+    let id = plugin_registry::PluginId::new(id.clone()).map_err(|_| "invalid plugin id")?;
+    if id.as_str().starts_with("teddy.") {
+        return Err("reserved plugin id".into());
+    }
+    if next_record_path(registry, &id).is_some_and(|path| manager_path == Some(path)) {
+        return Err("manager cannot control itself".into());
+    }
+    let mut next = registry.clone();
+    let action = match request {
+        plugin::LauncherRequest::Enable { descriptor, .. } => {
+            let mut record = if let Some(record) = next.get(&id).cloned() {
+                if descriptor.is_some() {
+                    return Err("existing plugin enable must be ID-only".into());
+                }
+                record
+            } else {
+                let descriptor = descriptor
+                    .as_ref()
+                    .ok_or_else(|| "unknown plugin requires descriptor".to_string())?;
+                let path = validate_manager_descriptor(descriptor)?;
+                plugin_registry::PluginRecord {
+                    id: id.clone(),
+                    path,
+                    enabled: false,
+                    restart: plugin_registry::RestartPolicy::new(
+                        descriptor.max_restarts,
+                        descriptor.backoff_ms,
+                    )
+                    .map_err(|e| e.to_string())?,
+                    generation: 0,
+                }
+            };
+            record.enabled = true;
+            next.upsert(record).map_err(|e| e.to_string())?;
+            LauncherAction::Enable
+        }
+        plugin::LauncherRequest::Disable(_) => {
+            let mut record = next
+                .get(&id)
+                .cloned()
+                .ok_or_else(|| "plugin is not registered".to_string())?;
+            record.enabled = false;
+            next.upsert(record).map_err(|e| e.to_string())?;
+            LauncherAction::Disable
+        }
+        plugin::LauncherRequest::Reload(_) => {
+            if next.get(&id).is_none() {
+                return Err("plugin is not registered".into());
+            }
+            LauncherAction::Reload
+        }
+        plugin::LauncherRequest::Forget(_) => {
+            if next.get(&id).is_some_and(|record| record.enabled) {
+                return Err("plugin must be disabled before forget".into());
+            }
+            next.remove(&id).map_err(|e| e.to_string())?;
+            LauncherAction::Forget
+        }
+        plugin::LauncherRequest::List { .. } => unreachable!(),
+    };
+    let save_outcome = if confirmed_recovery {
+        let path = registry_config_path().ok_or_else(|| "registry path unavailable".to_string())?;
+        next.save_recovered_at(&path).map_err(|e| e.to_string())?
+    } else {
+        next.save().map_err(|e| e.to_string())?
+    };
+    let warning = durability_warning(save_outcome);
+    *registry = next;
+    let response = match action {
+        LauncherAction::Enable => plugin::LauncherResponse::Enabled(id.to_string()),
+        LauncherAction::Disable => plugin::LauncherResponse::Disabled(id.to_string()),
+        LauncherAction::Reload => plugin::LauncherResponse::Reloaded(id.to_string()),
+        LauncherAction::Forget => plugin::LauncherResponse::Forgotten(id.to_string()),
+    };
+    Ok((response, Some(action), warning))
+}
+
+fn validate_manager_descriptor(descriptor: &plugin::LauncherDescriptor) -> Result<PathBuf, String> {
+    if descriptor.path.len() > 16 * 1024 || !Path::new(&descriptor.path).is_absolute() {
+        return Err("descriptor path must be bounded and absolute".into());
+    }
+    let path = PathBuf::from(&descriptor.path);
+    let metadata =
+        std::fs::metadata(&path).map_err(|_| "descriptor path is not a regular executable")?;
+    if !metadata.is_file() {
+        return Err("descriptor path is not a regular executable".into());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o111 == 0 {
+            return Err("descriptor path is not executable".into());
+        }
+    }
+    std::fs::canonicalize(path).map_err(|_| "descriptor path cannot be canonicalized".into())
+}
+
+fn next_record_path<'a>(
+    registry: &'a plugin_registry::Registry,
+    id: &plugin_registry::PluginId,
+) -> Option<&'a Path> {
+    registry.get(id).map(|record| record.path.as_path())
+}
+
+fn spans_match(
+    spans_buffer: usize,
+    spans_revision: u64,
+    spans_name: &str,
+    active: usize,
+    revision: u64,
+    name: &str,
+) -> bool {
+    spans_buffer == active && spans_revision == revision && spans_name == name
+}
+
+fn bundled_spans_allowed(is_bundled: bool, configured_viewport: bool) -> bool {
+    !is_bundled || !configured_viewport
+}
+
+fn invalidate_plugin(
+    slot: usize,
+    generation: u64,
+    plugins: &mut [plugin::Plugin],
+    mode: &mut Mode,
+    viewport_spans: &mut Vec<Vec<(u16, u16, u8)>>,
+    spans_owner: &mut Option<(usize, u64)>,
+    last_viewport_sent: &mut Option<(usize, u64, u64, u64, u16, u16, String)>,
+    dirty: &mut bool,
+) {
+    if matches!(mode, Mode::PluginWidget { plugin, .. } if *plugin == slot) {
+        *mode = Mode::Edit;
+    }
+    if *spans_owner == Some((slot, generation)) {
+        viewport_spans.clear();
+        *spans_owner = None;
+    }
+    plugins[slot].clear_contributions();
+    *last_viewport_sent = None;
+    *dirty = true;
+}
+
+fn lifecycle_code(state: plugin::PluginState) -> u8 {
+    match state {
+        plugin::PluginState::Starting => 0,
+        plugin::PluginState::Running => 1,
+        plugin::PluginState::Stopping => 2,
+        plugin::PluginState::Backoff => 3,
+        plugin::PluginState::Failed => 4,
+    }
+}
+
+fn sweep_plugin_edges(
+    plugins: &mut [plugin::Plugin],
+    seen: &mut Vec<(plugin::PluginState, u64)>,
+    mode: &mut Mode,
+    viewport_spans: &mut Vec<Vec<(u16, u16, u8)>>,
+    spans_owner: &mut Option<(usize, u64)>,
+    last_viewport_sent: &mut Option<(usize, u64, u64, u64, u16, u16, String)>,
+    dirty: &mut bool,
+) {
+    if seen.len() < plugins.len() {
+        seen.resize(plugins.len(), (plugin::PluginState::Failed, 0));
+    }
+    for i in 0..plugins.len() {
+        let old = seen[i];
+        let now = (plugins[i].state, plugins[i].process_generation);
+        if old.0 == plugin::PluginState::Running && now.0 != plugin::PluginState::Running {
+            invalidate_plugin(
+                i,
+                old.1,
+                plugins,
+                mode,
+                viewport_spans,
+                spans_owner,
+                last_viewport_sent,
+                dirty,
+            );
+        } else if old.0 != plugin::PluginState::Running && now.0 == plugin::PluginState::Running {
+            *last_viewport_sent = None;
+            *dirty = true;
+        } else if old != now {
+            *dirty = true;
+        }
+        seen[i] = now;
+    }
+}
+
+#[cfg(test)]
+mod startup_tests {
+    use super::{
+        bundled_highlighter_path, bundled_spans_allowed, configured_highlighter,
+        dispatch_launcher_request, durability_warning, manager_executable, spans_match,
+    };
+    use crate::plugin;
+    use crate::plugin_registry::{
+        PluginId, PluginRecord, Registry, RegistryError, RestartPolicy,
+        SaveOutcome as RegistrySaveOutcome,
+    };
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn bundled_highlighter_is_a_sibling_executable() {
+        let executable = Path::new("/opt/teddy/bin/teddy");
+        assert_eq!(
+            bundled_highlighter_path(executable),
+            PathBuf::from(format!(
+                "/opt/teddy/bin/teddy-highlight{}",
+                std::env::consts::EXE_SUFFIX
+            ))
+        );
+    }
+
+    #[test]
+    fn explicitly_named_highlighter_is_not_added_again() {
+        let bundled = Path::new("/tmp/teddy-highlight");
+        assert!(configured_highlighter(
+            &[PathBuf::from("teddy-highlight")],
+            bundled
+        ));
+        assert!(!configured_highlighter(
+            &[PathBuf::from("other-plugin")],
+            bundled
+        ));
+    }
+
+    #[test]
+    fn renamed_buffer_invalidates_spans_even_at_same_revision() {
+        assert!(spans_match(2, 7, "old.rs", 2, 7, "old.rs"));
+        assert!(!spans_match(2, 7, "old.rs", 2, 7, "notes.md"));
+    }
+
+    #[test]
+    fn configured_viewport_plugin_wins_over_bundled_spans() {
+        assert!(!bundled_spans_allowed(true, true));
+        assert!(bundled_spans_allowed(true, false));
+        assert!(bundled_spans_allowed(false, true));
+    }
+
+    #[test]
+    fn manager_path_requires_absolute_regular_executable() {
+        assert!(manager_executable(std::ffi::OsStr::new("relative-manager")).is_err());
+        assert!(manager_executable(std::ffi::OsStr::new("/bin/sh")).is_ok());
+    }
+
+    #[test]
+    fn launcher_dispatch_persists_desired_state_before_reporting_success() {
+        let path = std::env::temp_dir().join(format!("teddy-dispatch-{}", std::process::id()));
+        let mut registry = Registry::load_at(&path).unwrap();
+        registry
+            .upsert(PluginRecord {
+                id: PluginId::new("alpha").unwrap(),
+                path: PathBuf::from("/bin/true"),
+                enabled: false,
+                restart: RestartPolicy::default(),
+                generation: 0,
+            })
+            .unwrap();
+        registry.save_at(&path).unwrap();
+        let (response, action, warning) = dispatch_launcher_request(
+            &mut registry,
+            &plugin::LauncherRequest::Enable {
+                id: "alpha".into(),
+                descriptor: None,
+            },
+            None,
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(response, plugin::LauncherResponse::Enabled("alpha".into()));
+        assert_eq!(action, Some(super::LauncherAction::Enable));
+        assert!(warning.is_none());
+        assert!(registry.list()[0].enabled);
+        assert!(Registry::load_at(&path).unwrap().list()[0].enabled);
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(
+            std::env::temp_dir().join(format!("teddy-dispatch-{}.lock", std::process::id())),
+        );
+    }
+
+    #[test]
+    fn recovery_is_one_shot_then_stale_saves_conflict() {
+        let path = std::env::temp_dir().join(format!("teddy-recovery-{}", std::process::id()));
+        std::fs::write(&path, b"corrupt").unwrap();
+        let (mut recovered, error) = Registry::load_recoverable_at(&path);
+        assert!(error.is_some());
+        recovered
+            .upsert(PluginRecord {
+                id: PluginId::new("alpha").unwrap(),
+                path: PathBuf::from("/bin/true"),
+                enabled: true,
+                restart: RestartPolicy::default(),
+                generation: 0,
+            })
+            .unwrap();
+        recovered.save_recovered_at(&path).unwrap();
+        let mut stale = Registry::load_at(&path).unwrap();
+        recovered.toggle(&PluginId::new("alpha").unwrap()).unwrap();
+        recovered.save().unwrap();
+        stale.toggle(&PluginId::new("alpha").unwrap()).unwrap();
+        assert!(matches!(stale.save(), Err(RegistryError::Conflict)));
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("lock"));
+    }
+
+    #[test]
+    fn committed_registry_warning_keeps_success_path() {
+        let warning = durability_warning(RegistrySaveOutcome::CommittedWithWarning {
+            error: std::io::Error::new(std::io::ErrorKind::Other, "directory sync warning"),
+        });
+        assert_eq!(warning.as_deref(), Some("directory sync warning"));
+        assert!(durability_warning(RegistrySaveOutcome::Durable).is_none());
+    }
+}
+
 /// Cap on bytes read per rendered row / prefix scan.
 /// ponytail: degenerate multi-MB single lines render/measure only their
 /// head; a windowed measure replaces this if it ever matters.
@@ -158,7 +633,6 @@ const COMMANDS: &[(&str, &str)] = &[
     ("save-as", "save-as <path>"),
     ("reload", "reload from disk"),
     ("follow", "toggle follow mode"),
-    ("plugin-restart", "plugin-restart <name>"),
     ("quit", "quit"),
 ];
 
@@ -211,8 +685,22 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
     let mut viewport_spans: Vec<Vec<(u16, u16, u8)>> = Vec::new();
     let mut spans_revision: u64 = 0;
     let mut spans_buffer: usize = usize::MAX;
-    let mut last_viewport_sent: Option<(usize, u64, u64, u64, u16, u16)> = None;
+    let mut spans_name = String::new();
+    let mut spans_owner: Option<(usize, u64)> = None;
+    let mut bundled_plugins: Vec<bool> = Vec::new();
+    let mut last_viewport_sent: Option<(usize, u64, u64, u64, u16, u16, String)> = None;
     let mut viewport_seq: u32 = 0;
+    let registry_path = registry_config_path();
+    let (mut registry, registry_error) = registry_path
+        .as_deref()
+        .map(plugin_registry::Registry::load_recoverable_at)
+        .unwrap_or_else(|| (plugin_registry::Registry::default(), None));
+    if let Some(error) = registry_error.as_ref() {
+        status_msg = format!("plugin registry unavailable: {error}");
+        dirty = true;
+    }
+    let mut registry_recovery_required = registry_error.is_some();
+    let mut manager_index: Option<usize> = None;
 
     let mut frame = FrameBuf::new();
     let mut render_cache = RenderCache::new();
@@ -227,6 +715,7 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
     let mut scratch = Vec::new();
     let mut poll_ready = Vec::new();
     let mut plugin_ready = Vec::new();
+    let mut stderr_ready = Vec::new();
     let mut idle_ready = Vec::new();
     // owned tab snapshot, rebuilt only when a name/modified flag changes
     let mut tabs_buf: Vec<(String, bool)> = Vec::new();
@@ -246,23 +735,94 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
     }
     let mut watch_tokens: Vec<u64> = Vec::new();
 
-    if let Some(paths) = std::env::var_os("TEDDY_PLUGINS") {
-        for path in std::env::split_paths(&paths) {
-            if path.as_os_str().is_empty() {
-                continue;
-            }
-            match plugin::Plugin::spawn(&path) {
-                Ok(p) => plugins.push(p),
-                Err(e) => {
-                    status_msg.clear();
-                    let _ = write!(status_msg, "{}: plugin failed: {e}", path.display());
-                    dirty = true;
-                }
+    // Durable registry sources precede nonpersistent legacy sources.  The
+    // latter retain their historical order, including bundled precedence.
+    let mut startup_paths: Vec<(PathBuf, plugin::PluginSource, bool, String)> = registry
+        .list()
+        .iter()
+        .filter(|record| record.enabled)
+        .map(|record| {
+            (
+                record.path.clone(),
+                plugin::PluginSource::Registry,
+                false,
+                record.id.to_string(),
+            )
+        })
+        .collect();
+    startup_paths.extend(plugin_paths().into_iter().enumerate().map(
+        |(legacy_index, (path, bundled))| {
+            (
+                path,
+                if bundled {
+                    plugin::PluginSource::Bundled
+                } else {
+                    plugin::PluginSource::Legacy
+                },
+                bundled,
+                if bundled {
+                    "teddy.bundled.highlight".to_owned()
+                } else {
+                    format!("teddy.legacy.{legacy_index}")
+                },
+            )
+        },
+    ));
+    if let Some(value) = std::env::var_os("TEDDY_PLUGIN_MANAGER") {
+        match manager_executable(&value) {
+            Ok(path) => startup_paths.push((
+                path,
+                plugin::PluginSource::Manager,
+                false,
+                "teddy.manager".to_owned(),
+            )),
+            Err(error) => {
+                status_msg = format!("plugin manager unavailable: {error}");
+                dirty = true;
             }
         }
     }
+    for (path, source, bundled, id) in startup_paths {
+        match plugin::Plugin::spawn_with_source_id(&path, source, &id) {
+            Ok(mut p) => {
+                if source == plugin::PluginSource::Registry {
+                    if let Some(record) = registry.list().iter().find(|r| r.id.as_str() == id) {
+                        p.max_restarts = record.restart.max_restarts;
+                        p.backoff_ms = record.restart.backoff_ms;
+                    }
+                }
+                if source == plugin::PluginSource::Manager {
+                    manager_index = Some(plugins.len());
+                }
+                plugins.push(p);
+                bundled_plugins.push(bundled);
+            }
+            Err(e) => {
+                status_msg.clear();
+                let _ = write!(status_msg, "{}: plugin failed: {e}", path.display());
+                dirty = true;
+            }
+        }
+    }
+    let mut launcher_frames: Vec<(usize, plugin::Frame)> = Vec::new();
+    let mut lifecycle_seen: Vec<(plugin::PluginState, u64)> = plugins
+        .iter()
+        .map(|p| (p.state, p.process_generation))
+        .collect();
 
     loop {
+        for p in &mut plugins {
+            p.service();
+        }
+        sweep_plugin_edges(
+            &mut plugins,
+            &mut lifecycle_seen,
+            &mut mode,
+            &mut viewport_spans,
+            &mut spans_owner,
+            &mut last_viewport_sent,
+            &mut dirty,
+        );
         // spec §18: input drains before paint (zero timeout while dirty
         // or while cooperative jobs want their next slice)
         let jobs_active = search_job.is_some()
@@ -285,6 +845,7 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
             for p in &plugins {
                 if p.alive {
                     poll_fds.push(p.fd());
+                    poll_fds.push(p.stderr_fd());
                 }
             }
             term::poll_stdin(&poll_fds, &mut poll_ready, timeout)?
@@ -292,11 +853,14 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
         let watch_ready = has_watcher && poll_ready.first().copied().unwrap_or(false);
         plugin_ready.clear();
         plugin_ready.resize(plugins.len(), false);
+        stderr_ready.clear();
+        stderr_ready.resize(plugins.len(), false);
         let mut ready_idx = usize::from(has_watcher);
         for (i, p) in plugins.iter().enumerate() {
             if p.alive {
                 plugin_ready[i] = poll_ready.get(ready_idx).copied().unwrap_or(false);
-                ready_idx += 1;
+                stderr_ready[i] = poll_ready.get(ready_idx + 1).copied().unwrap_or(false);
+                ready_idx += 2;
             }
         }
         if stdin_ready {
@@ -366,6 +930,17 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
             }
         }
 
+        // Input and watcher work precede all diagnostic output.  The budget
+        // is aggregate, so one noisy child cannot monopolize a tick.
+        let mut stderr_budget = 16 * 1024usize;
+        for i in 0..plugins.len() {
+            if stderr_budget == 0 || !stderr_ready.get(i).copied().unwrap_or(false) {
+                continue;
+            }
+            let used = plugins[i].drain_stderr(stderr_budget);
+            stderr_budget = stderr_budget.saturating_sub(used);
+        }
+
         for i in 0..plugins.len() {
             if !plugin_ready.get(i).copied().unwrap_or(false) {
                 continue;
@@ -385,6 +960,7 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
             }
             for frame in frames {
                 match frame.msg_type {
+                    plugin::LAUNCHER_REQUEST => launcher_frames.push((i, frame)),
                     plugin::EDIT_TX => {
                         let ok = handle_plugin_edit(&frame, buffers);
                         if ok {
@@ -404,7 +980,11 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                         });
                     }
                     plugin::SPANS => {
-                        if frame.resource_id == active as u64
+                        let configured_viewport = plugins.iter().enumerate().any(|(index, p)| {
+                            !bundled_plugins[index] && p.alive && p.wants_viewport
+                        });
+                        if bundled_spans_allowed(bundled_plugins[i], configured_viewport)
+                            && frame.resource_id == active as u64
                             && frame.resource_revision == buffers[active].revision
                             && frame.request_id == viewport_seq
                         {
@@ -418,6 +998,7 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                                     }
                                 }
                                 spans_buffer = active;
+                                spans_owner = Some((i, plugins[i].process_generation));
                                 spans_revision = frame.resource_revision;
                                 dirty = true;
                                 plugin_dirty = true;
@@ -445,11 +1026,7 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
             }
             if !plugins[i].alive {
                 status_msg.clear();
-                let _ = write!(
-                    status_msg,
-                    "{}: plugin stopped (palette: plugin-restart)",
-                    plugins[i].name
-                );
+                let _ = write!(status_msg, "{}: plugin stopped", plugins[i].name);
                 plugin_dirty = true;
             }
             for notice in plugins[i].notices.drain(..) {
@@ -460,6 +1037,172 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                 dirty = true;
             }
         }
+
+        sweep_plugin_edges(
+            &mut plugins,
+            &mut lifecycle_seen,
+            &mut mode,
+            &mut viewport_spans,
+            &mut spans_owner,
+            &mut last_viewport_sent,
+            &mut dirty,
+        );
+
+        // Launcher control is intentionally handled only after every ready
+        // plugin has drained its normal v1 frames for this tick.
+        for (source_index, frame) in launcher_frames.drain(..) {
+            let authorized =
+                manager_index == Some(source_index) && plugins[source_index].manager_capable();
+            if !authorized {
+                plugins[source_index].stop_for_protocol();
+                continue;
+            }
+            let request = match plugin::decode_launcher_request(&frame) {
+                Ok(request) => request,
+                Err(_) => {
+                    plugins[source_index]
+                        .send_launcher_error(frame.request_id, "malformed launcher request");
+                    continue;
+                }
+            };
+            let manager_path = plugins[source_index].path.clone();
+            if let plugin::LauncherRequest::Forget(id) = &request {
+                if let Some(slot) = plugins.iter().find(|p| p.runtime_id == *id) {
+                    if slot.state != plugin::PluginState::Failed {
+                        plugins[source_index]
+                            .send_launcher_error(frame.request_id, "plugin is not fully reaped");
+                        continue;
+                    }
+                }
+            }
+            match dispatch_launcher_request(
+                &mut registry,
+                &request,
+                Some(&manager_path),
+                registry_recovery_required,
+                Some(
+                    &plugins
+                        .iter()
+                        .map(|p| (p.runtime_id.clone(), lifecycle_code(p.state)))
+                        .collect(),
+                ),
+            ) {
+                Ok((response, action, warning)) => {
+                    if let Some(warning) = warning {
+                        status_msg = format!(
+                            "plugin registry durability warning: {}",
+                            plugin::sanitize_stderr(warning.as_bytes())
+                        );
+                        dirty = true;
+                    }
+                    if registry_recovery_required
+                        && !matches!(request, plugin::LauncherRequest::List { .. })
+                    {
+                        registry_recovery_required = false;
+                    }
+                    if let Some(action) = action {
+                        let id = match &request {
+                            plugin::LauncherRequest::Enable { id, .. }
+                            | plugin::LauncherRequest::Disable(id)
+                            | plugin::LauncherRequest::Reload(id)
+                            | plugin::LauncherRequest::Forget(id) => id,
+                            plugin::LauncherRequest::List { .. } => unreachable!(),
+                        };
+                        let mut runtime_error = None;
+                        if let Some(slot) =
+                            plugins.iter().position(|plugin| plugin.runtime_id == *id)
+                        {
+                            if let plugin::LauncherRequest::Enable {
+                                descriptor: Some(_),
+                                ..
+                            } = &request
+                            {
+                                if let Some(record) =
+                                    registry.list().iter().find(|r| r.id.as_str() == id)
+                                {
+                                    plugins[slot].path = record.path.clone();
+                                    plugins[slot].max_restarts = record.restart.max_restarts;
+                                    plugins[slot].backoff_ms = record.restart.backoff_ms;
+                                    plugins[slot].reset_retry_accounting();
+                                }
+                            }
+                            match action {
+                                LauncherAction::Disable | LauncherAction::Forget => {
+                                    plugins[slot].stop_for_protocol();
+                                    if action == LauncherAction::Forget {
+                                        plugins[slot].path = PathBuf::new();
+                                    }
+                                }
+                                LauncherAction::Reload => {
+                                    if let Err(error) = plugins[slot].restart() {
+                                        runtime_error = Some(error.to_string());
+                                    } else {
+                                        plugins[slot].reset_retry_accounting();
+                                    }
+                                }
+                                LauncherAction::Enable => {
+                                    if !plugins[slot].alive {
+                                        if let Err(error) = plugins[slot].restart() {
+                                            runtime_error = Some(error.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        } else if matches!(action, LauncherAction::Enable) {
+                            if let Some(record) =
+                                registry.list().iter().find(|r| r.id.as_str() == id)
+                            {
+                                match plugin::Plugin::spawn_with_source_id(
+                                    &record.path,
+                                    plugin::PluginSource::Registry,
+                                    id,
+                                ) {
+                                    Ok(plugin) => {
+                                        let mut plugin = plugin;
+                                        plugin.max_restarts = record.restart.max_restarts;
+                                        plugin.backoff_ms = record.restart.backoff_ms;
+                                        plugins.push(plugin);
+                                        bundled_plugins.push(false);
+                                    }
+                                    Err(error) => runtime_error = Some(error.to_string()),
+                                }
+                            }
+                        } else if matches!(action, LauncherAction::Reload) {
+                            runtime_error = Some("plugin is not running".into());
+                        }
+                        if let Some(error) = runtime_error {
+                            plugins[source_index].send_launcher_error(frame.request_id, &error);
+                            continue;
+                        }
+                        let event = match action {
+                            LauncherAction::Enable => plugin::LauncherEvent::Enabled(id.clone()),
+                            LauncherAction::Disable => plugin::LauncherEvent::Disabled(id.clone()),
+                            LauncherAction::Reload => plugin::LauncherEvent::Reloaded(id.clone()),
+                            LauncherAction::Forget => plugin::LauncherEvent::Forgotten(id.clone()),
+                        };
+                        if let Ok(event_frame) = plugin::encode_launcher_event(&event) {
+                            plugins[source_index].send(&event_frame);
+                        }
+                    }
+                    match plugin::encode_launcher_response(frame.request_id, &response) {
+                        Ok(response_frame) => plugins[source_index].send(&response_frame),
+                        Err(_) => plugins[source_index]
+                            .send_launcher_error(frame.request_id, "launcher response too large"),
+                    }
+                }
+                Err(error) => plugins[source_index].send_launcher_error(frame.request_id, &error),
+            }
+        }
+
+        sweep_plugin_edges(
+            &mut plugins,
+            &mut lifecycle_seen,
+            &mut mode,
+            &mut viewport_spans,
+            &mut spans_owner,
+            &mut last_viewport_sent,
+            &mut dirty,
+        );
 
         let editor_rows = rows.saturating_sub(2).max(1) as u64;
         for k in keys.drain(..) {
@@ -560,8 +1303,7 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                                 Ok(()) => {
                                     replace_count += 1;
                                     let delta = replace_with.len() as i64 - n as i64;
-                                    replace_scope_end =
-                                        (replace_scope_end as i64 + delta) as u64;
+                                    replace_scope_end = (replace_scope_end as i64 + delta) as u64;
                                     buf.cursor = at + replace_with.len() as u64;
                                     buf.sel_anchor = None;
                                     search_job = Some(search::Search::new_no_wrap(
@@ -577,10 +1319,8 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                             }
                         }
                         (Key::Char('n'), Some(at)) => {
-                            search_job = Some(search::Search::new_no_wrap(
-                                find_needle.clone(),
-                                at + 1,
-                            ));
+                            search_job =
+                                Some(search::Search::new_no_wrap(find_needle.clone(), at + 1));
                             confirm_match = None;
                             buffers[active].sel_anchor = None;
                         }
@@ -657,7 +1397,11 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                                         status_msg.push_str("open <path>");
                                     } else {
                                         let path = PathBuf::from(arg);
-                                        let path = if path.is_absolute() { path } else { root.join(path) };
+                                        let path = if path.is_absolute() {
+                                            path
+                                        } else {
+                                            root.join(path)
+                                        };
                                         match Buffer::open(&path) {
                                             Ok(b) => {
                                                 search_job = None;
@@ -726,7 +1470,11 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                                         status_msg.push_str("save-as <path>");
                                     } else {
                                         let path = PathBuf::from(arg);
-                                        let path = if path.is_absolute() { path } else { root.join(path) };
+                                        let path = if path.is_absolute() {
+                                            path
+                                        } else {
+                                            root.join(path)
+                                        };
                                         let buf = &mut buffers[active];
                                         match buf.save_as(path) {
                                             Ok(()) => {
@@ -773,28 +1521,6 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                                         buf.follow = false;
                                         buf.readonly = buf.binary;
                                         status_msg.push_str("follow off");
-                                    }
-                                }
-                                Some("plugin-restart") => {
-                                    if arg.is_empty() {
-                                        status_msg.push_str("plugin-restart <name>");
-                                    } else if let Some(p) =
-                                        plugins.iter_mut().find(|p| p.name == arg)
-                                    {
-                                        match p.restart() {
-                                            Ok(()) => {
-                                                let _ =
-                                                    write!(status_msg, "{arg}: plugin restarted");
-                                            }
-                                            Err(e) => {
-                                                let _ = write!(
-                                                    status_msg,
-                                                    "{arg}: restart failed: {e}"
-                                                );
-                                            }
-                                        }
-                                    } else {
-                                        let _ = write!(status_msg, "{arg}: no such plugin");
                                     }
                                 }
                                 Some("quit") => {
@@ -1004,20 +1730,45 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                 Key::Char(c) => {
                     let mut enc = [0u8; 4];
                     let s = c.encode_utf8(&mut enc);
-                    do_edit(&mut buffers[active], s.as_bytes(), KIND_INSERT, &mut last_edit_kind, &mut status_msg, &mut scratch);
+                    do_edit(
+                        &mut buffers[active],
+                        s.as_bytes(),
+                        KIND_INSERT,
+                        &mut last_edit_kind,
+                        &mut status_msg,
+                        &mut scratch,
+                    );
                 }
-                Key::Enter => {
-                    do_edit(&mut buffers[active], b"\n", KIND_INSERT, &mut last_edit_kind, &mut status_msg, &mut scratch)
-                }
-                Key::Tab => {
-                    do_edit(&mut buffers[active], b"\t", KIND_INSERT, &mut last_edit_kind, &mut status_msg, &mut scratch)
-                }
-                Key::Backspace => {
-                    do_delete(&mut buffers[active], false, &mut last_edit_kind, &mut status_msg, &mut scratch)
-                }
-                Key::Delete => {
-                    do_delete(&mut buffers[active], true, &mut last_edit_kind, &mut status_msg, &mut scratch)
-                }
+                Key::Enter => do_edit(
+                    &mut buffers[active],
+                    b"\n",
+                    KIND_INSERT,
+                    &mut last_edit_kind,
+                    &mut status_msg,
+                    &mut scratch,
+                ),
+                Key::Tab => do_edit(
+                    &mut buffers[active],
+                    b"\t",
+                    KIND_INSERT,
+                    &mut last_edit_kind,
+                    &mut status_msg,
+                    &mut scratch,
+                ),
+                Key::Backspace => do_delete(
+                    &mut buffers[active],
+                    false,
+                    &mut last_edit_kind,
+                    &mut status_msg,
+                    &mut scratch,
+                ),
+                Key::Delete => do_delete(
+                    &mut buffers[active],
+                    true,
+                    &mut last_edit_kind,
+                    &mut status_msg,
+                    &mut scratch,
+                ),
                 Key::Esc => {
                     last_edit_kind = KIND_NONE;
                     buffers[active].sel_anchor = None;
@@ -1051,7 +1802,8 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                             // match starts past the selection scope: done
                             buf.sel_anchor = None;
                             status_msg.clear();
-                            let _ = write!(status_msg, "replaced {replace_count} — end of selection");
+                            let _ =
+                                write!(status_msg, "replaced {replace_count} — end of selection");
                             mode = Mode::Edit;
                         } else {
                             buf.sel_anchor = Some(at);
@@ -1067,7 +1819,8 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                         if mode == Mode::ReplaceConfirm {
                             buf.sel_anchor = None;
                             status_msg.clear();
-                            let _ = write!(status_msg, "replaced {replace_count} — no more matches");
+                            let _ =
+                                write!(status_msg, "replaced {replace_count} — no more matches");
                             mode = Mode::Edit;
                         } else {
                             status_msg.clear();
@@ -1228,7 +1981,11 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                     } else if let Some(j) = &replace_job {
                         let _ = write!(status_left, "  replacing… {}%", j.progress(buf.len()));
                     } else if let Some(ib) = &buf.index_build {
-                        let pct = if buf.len() == 0 { 100 } else { ib.pos * 100 / buf.len() };
+                        let pct = if buf.len() == 0 {
+                            100
+                        } else {
+                            ib.pos * 100 / buf.len()
+                        };
                         let _ = write!(status_left, "  indexing… {pct}%");
                     }
                     if !status_msg.is_empty() {
@@ -1246,12 +2003,36 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                 tabs_buf.clear();
                 tabs_buf.extend(buffers.iter().map(|b| (b.name.clone(), b.modified())));
             }
-            if spans_buffer != active || spans_revision != buffers[active].revision {
+            sweep_plugin_edges(
+                &mut plugins,
+                &mut lifecycle_seen,
+                &mut mode,
+                &mut viewport_spans,
+                &mut spans_owner,
+                &mut last_viewport_sent,
+                &mut dirty,
+            );
+            if !spans_match(
+                spans_buffer,
+                spans_revision,
+                &spans_name,
+                active,
+                buffers[active].revision,
+                &buffers[active].name,
+            ) {
                 viewport_spans.clear();
                 spans_buffer = usize::MAX;
                 spans_revision = 0;
+                spans_name = buffers[active].name.clone();
             }
-            let valid_spans = spans_buffer == active && spans_revision == buffers[active].revision;
+            let valid_spans = spans_match(
+                spans_buffer,
+                spans_revision,
+                &spans_name,
+                active,
+                buffers[active].revision,
+                &buffers[active].name,
+            );
             let v = View {
                 cols,
                 rows,
@@ -1268,6 +2049,7 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
             render::paint(&mut frame, &mut render_cache, &v);
             out.write_all(frame.as_bytes())?;
             out.flush()?;
+            dirty = false;
             let viewport_key = (
                 active,
                 buffers[active].revision,
@@ -1275,9 +2057,10 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                 buffers[active].top_byte,
                 cols,
                 rows,
+                buffers[active].name.clone(),
             );
             if mode == Mode::Edit
-                && last_viewport_sent != Some(viewport_key)
+                && last_viewport_sent.as_ref() != Some(&viewport_key)
                 && plugins.iter().any(|p| p.alive && p.wants_viewport)
             {
                 // Overlays own row_store outside Edit mode, so VIEWPORT frames are only
@@ -1296,7 +2079,15 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                 }
                 last_viewport_sent = Some(viewport_key);
             }
-            dirty = false;
+            sweep_plugin_edges(
+                &mut plugins,
+                &mut lifecycle_seen,
+                &mut mode,
+                &mut viewport_spans,
+                &mut spans_owner,
+                &mut last_viewport_sent,
+                &mut dirty,
+            );
             #[cfg(feature = "perf")]
             perf.frame_end(frame.as_bytes().len());
         }
@@ -1444,7 +2235,11 @@ mod perf {
     impl Perf {
         pub fn from_env() -> Self {
             let log = std::env::var_os("TEDDY_PERF").and_then(|p| std::fs::File::create(p).ok());
-            Perf { log, t0: None, allocs0: 0 }
+            Perf {
+                log,
+                t0: None,
+                allocs0: 0,
+            }
         }
 
         pub fn frame_start(&mut self) {
@@ -1453,7 +2248,9 @@ mod perf {
         }
 
         pub fn frame_end(&mut self, frame_bytes: usize) {
-            let (Some(t0), Some(log)) = (self.t0.take(), self.log.as_mut()) else { return };
+            let (Some(t0), Some(log)) = (self.t0.take(), self.log.as_mut()) else {
+                return;
+            };
             let us = t0.elapsed().as_micros();
             let allocs = ALLOCS.load(Ordering::Relaxed) - self.allocs0;
             let _ = writeln!(log, "{us} {allocs} {frame_bytes}");
@@ -1487,7 +2284,13 @@ fn do_edit(
     }
 }
 
-fn do_delete(buf: &mut Buffer, forward: bool, last_kind: &mut u8, msg: &mut String, scratch: &mut Vec<u8>) {
+fn do_delete(
+    buf: &mut Buffer,
+    forward: bool,
+    last_kind: &mut u8,
+    msg: &mut String,
+    scratch: &mut Vec<u8>,
+) {
     let kind = if forward { KIND_DELETE } else { KIND_BACKSPACE };
     if kind != *last_kind {
         buf.group_counter += 1;
@@ -1732,7 +2535,11 @@ fn build_view(
         }
         let row_start = starts.get(r).copied().unwrap_or(buf.top_byte);
         scratch.clear();
-        buf.read_range(row_start, (buf.cursor - row_start).min(LINE_CAP as u64), scratch);
+        buf.read_range(
+            row_start,
+            (buf.cursor - row_start).min(LINE_CAP as u64),
+            scratch,
+        );
         let vcol = render::visual_col(scratch, scratch.len());
         clamp_left(buf, vcol, cols);
         return ((vcol - buf.left_col) as u16, r as u16);
@@ -1756,13 +2563,24 @@ fn build_view(
     }
     let line_start = buf.line_start(cursor_line);
     scratch.clear();
-    buf.read_range(line_start, (buf.cursor - line_start).min(LINE_CAP as u64), scratch);
+    buf.read_range(
+        line_start,
+        (buf.cursor - line_start).min(LINE_CAP as u64),
+        scratch,
+    );
     let vcol = render::visual_col(scratch, scratch.len());
     clamp_left(buf, vcol, cols);
-    ((vcol - buf.left_col) as u16, (cursor_line - buf.top_line) as u16)
+    (
+        (vcol - buf.left_col) as u16,
+        (cursor_line - buf.top_line) as u16,
+    )
 }
 
-fn intersect_sel(sel: Option<(u64, u64)>, row_start: u64, row_len: usize) -> Option<(usize, usize)> {
+fn intersect_sel(
+    sel: Option<(u64, u64)>,
+    row_start: u64,
+    row_len: usize,
+) -> Option<(usize, usize)> {
     let (a, b) = sel?;
     let lo = a.max(row_start);
     let hi = b.min(row_start + row_len as u64);
@@ -1811,10 +2629,25 @@ fn format_status(buf: &mut Buffer, left: &mut String, right: &mut String) {
         left.push_str("  CHG");
     }
     if buf.huge || buf.line_index.is_none() {
-        let pct = if buf.len() == 0 { 100 } else { buf.cursor * 100 / buf.len() };
-        let _ = write!(right, "byte {} / {} ({}%)  Ctrl+Q quit ", buf.cursor, buf.len(), pct);
+        let pct = if buf.len() == 0 {
+            100
+        } else {
+            buf.cursor * 100 / buf.len()
+        };
+        let _ = write!(
+            right,
+            "byte {} / {} ({}%)  Ctrl+Q quit ",
+            buf.cursor,
+            buf.len(),
+            pct
+        );
     } else {
         let line = buf.line_of_byte(buf.cursor);
-        let _ = write!(right, "Ln {}, Col {}  Ctrl+Q quit ", line + 1, buf.goal_col + 1);
+        let _ = write!(
+            right,
+            "Ln {}, Col {}  Ctrl+Q quit ",
+            line + 1,
+            buf.goal_col + 1
+        );
     }
 }

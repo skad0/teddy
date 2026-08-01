@@ -74,12 +74,71 @@ enum HighlightKind {
 
 impl HighlightKind {
     fn for_name(name: &str) -> Option<Self> {
-        if name.ends_with(".rs") {
-            Some(Self::Rust)
-        } else if name.ends_with(".md") || name.ends_with(".markdown") {
-            Some(Self::Markdown)
-        } else {
-            None
+        let basename = std::path::Path::new(name)
+            .file_name()?
+            .to_str()?
+            .to_ascii_lowercase();
+        let (stem, extension) = match basename.rsplit_once('.') {
+            Some((stem, extension)) => (stem, Some(extension)),
+            None => (basename.as_str(), None),
+        };
+
+        match extension {
+            Some("rs") => Some(Self::Rust),
+            Some("md" | "markdown" | "mdown" | "mkd" | "mkdn")
+                if matches!(
+                    stem,
+                    "readme" | "changelog" | "contributing" | "code_of_conduct"
+                ) =>
+            {
+                Some(Self::Markdown)
+            }
+            Some("md" | "markdown" | "mdown" | "mkd" | "mkdn") => Some(Self::Markdown),
+            None if matches!(
+                stem,
+                "readme" | "changelog" | "contributing" | "code_of_conduct"
+            ) =>
+            {
+                Some(Self::Markdown)
+            }
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HighlightKind;
+
+    #[test]
+    fn maps_supported_extensions_case_insensitively() {
+        assert!(matches!(
+            HighlightKind::for_name("src/lib.RS"),
+            Some(HighlightKind::Rust)
+        ));
+        for extension in ["md", "markdown", "mdown", "mkd", "mkdn", "MD"] {
+            assert!(matches!(
+                HighlightKind::for_name(&format!("notes.{extension}")),
+                Some(HighlightKind::Markdown)
+            ));
+        }
+    }
+
+    #[test]
+    fn maps_conventional_markdown_names_and_rejects_unknowns() {
+        for name in [
+            "README",
+            "CHANGELOG.md",
+            "contributing.MARKDOWN",
+            "CODE_OF_CONDUCT.mkd",
+        ] {
+            assert!(matches!(
+                HighlightKind::for_name(name),
+                Some(HighlightKind::Markdown)
+            ));
+        }
+        for name in ["main.py", "file.txt", "README.txt", "no-extension"] {
+            assert!(HighlightKind::for_name(name).is_none());
         }
     }
 }

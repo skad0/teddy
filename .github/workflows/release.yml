@@ -1,0 +1,147 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate-and-publish:
+    if: github.repository == 'skad0/teddy'
+    runs-on: ubuntu-latest
+    environment: crates-io
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate tag ancestry and package version
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -eu
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          import sys
+
+          tag = os.environ["TAG"]
+          if not re.fullmatch(r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", tag):
+              sys.exit("release tag must be strict vX.Y.Z semver")
+          tag_ref = os.environ["GITHUB_REF"]
+          tag_commit = subprocess.check_output(
+              ["git", "rev-parse", f"{tag_ref}^{{commit}}"], text=True
+          ).strip()
+          subprocess.run(["git", "fetch", "--no-tags", "origin", "main"], check=True)
+          main_ref = subprocess.check_output(
+              ["git", "rev-parse", "refs/remotes/origin/main"], text=True
+          ).strip()
+          if subprocess.run(["git", "merge-base", "--is-ancestor", tag_commit, main_ref]).returncode != 0:
+              sys.exit("release tag does not point to a commit merged into origin/main")
+
+          version = tag[1:]
+          metadata = json.loads(subprocess.check_output([
+              "cargo", "metadata", "--no-deps", "--format-version", "1"
+          ], text=True))
+          packages = [p for p in metadata["packages"] if p["name"] == "teddytor"]
+          if len(packages) != 1 or packages[0]["version"] != version:
+              sys.exit("tag and teddytor package version do not match")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"version={version}\n")
+          PY
+
+      - name: Validate changelog section
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -eu
+          python3 - <<'PY'
+          import os
+          import re
+          import sys
+
+          version = os.environ["VERSION"]
+          text = open("CHANGELOG.md", encoding="utf-8").read()
+          matches = list(re.finditer(
+              rf"(?ms)^## \[?{re.escape(version)}\]?\s*$\n(.*?)(?=^## |\Z)",
+              text,
+          ))
+          if len(matches) != 1 or not matches[0].group(1).strip():
+              sys.exit(f"missing or malformed changelog section for {version}")
+          if re.search(rf"(?m)^## \[?{re.escape(version)}\]?\s*$", text) is None:
+              sys.exit(f"missing changelog heading for {version}")
+          PY
+
+      - name: Test all targets
+        run: cargo test --all-targets
+
+      - name: Check publish package
+        run: cargo publish --dry-run
+
+      - name: Publish package
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish
+
+  create-github-release:
+    if: github.repository == 'skad0/teddy'
+    needs: validate-and-publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Extract exact changelog section
+        env:
+          VERSION: ${{ needs.validate-and-publish.outputs.version }}
+        run: |
+          set -eu
+          python3 - <<'PY'
+          import os
+          import re
+          import subprocess
+          import sys
+
+          version = os.environ["VERSION"]
+          text = subprocess.check_output(
+              ["git", "show", f"{os.environ['GITHUB_REF']}^{{commit}}:CHANGELOG.md"],
+              text=True,
+          )
+          match = re.search(
+              rf"(?ms)^## \[?{re.escape(version)}\]?\s*$\n(.*?)(?=^## |\Z)",
+              text,
+          )
+          if not match or not match.group(1).strip():
+              sys.exit(f"missing changelog section for {version}")
+          with open(os.environ["RUNNER_TEMP"] + "/release-notes.md", "w", encoding="utf-8") as notes:
+              notes.write(f"## {version}\n{match.group(1).rstrip()}\n")
+          PY
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.validate-and-publish.outputs.version }}
+        run: |
+          set -eu
+          gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --title "teddy v$VERSION" \
+            --notes-file "$RUNNER_TEMP/release-notes.md"
