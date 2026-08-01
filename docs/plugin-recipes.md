@@ -56,6 +56,12 @@ Do not install the bundled `teddy-highlight` as a catalog plugin. The core adds
 the bundled highlighter separately when available and preserves its configured
 precedence.
 
+Do not install `teddy-ai` as a catalog plugin or include it in a manager bundle
+recipe. It is a bundled sibling executable, not a catalog package. You may run
+it directly alongside teddy with an absolute `TEDDY_PLUGINS` path to exercise
+its out-of-process framed protocol and registered `ai` shell; it only replies
+`ai shell: no provider configured` and is not a functional AI bundle.
+
 ## Receipts, recovery, and troubleshooting
 
 Manager data is under `$XDG_DATA_HOME/teddy/plugins` (or

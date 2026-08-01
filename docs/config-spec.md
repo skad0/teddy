@@ -35,6 +35,8 @@ package authority.
   executable paths. Its relative order is preserved.
 * The bundled sibling `teddy-highlight` is added automatically when available
   and not already configured. A configured highlighter retains precedence.
+* The bundled sibling `teddy-ai` is not added automatically. Put its absolute
+  path in `TEDDY_PLUGINS` to run its framed `ai` shell directly.
 * `TEDDY_PLUGIN_MANAGER` is opt-in and must be an existing absolute regular
   executable with execute permission. It is not downloaded or bootstrapped and
   runs in the reserved `teddy.manager` slot.
@@ -48,6 +50,9 @@ Only `teddy.manager` may send launcher requests, and it cannot control itself.
 * `TEDDY_PLUGINS` — nonpersistent plugin path list.
 * `TEDDY_PLUGIN_MANAGER` — optional absolute manager executable.
 * `TEDDY_PERF` — performance log path when built with the `perf` feature.
+
+There are no AI provider settings: no provider, API-key, environment, CLI,
+model, or other AI configuration is implemented.
 
 The manager's files are separate from the core registry:
 

@@ -6,6 +6,14 @@ separately launched binary, enabled only when `TEDDY_PLUGIN_MANAGER` is an
 existing absolute executable. The core does no Git or package work and never
 accepts shell, argv, Git, or package authority.
 
+The `teddytor` package ships `teddy-ai` as an implicit `src/bin/teddy-ai.rs`
+binary. It is a bundled sibling plugin, not a separate crate or catalog
+manager package. It registers `ai` and currently responds to invocation with
+`ai shell: no provider configured`; it has no provider, API key, environment
+setting, CLI arguments, model/configuration, or functional AI behavior. It can
+be supplied directly through `TEDDY_PLUGINS`, but is not a manager-installed
+catalog plugin.
+
 The canonical implementation is [`src/plugin.rs`](../src/plugin.rs).
 
 ## v1 framing and handshake

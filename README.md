@@ -22,6 +22,7 @@ in [`docs/build.md`](docs/build.md).
 ## Documentation
 
 - [User interface and commands](docs/interface.md)
+- [Cheatsheet](docs/cheatsheet.md)
 - [Plugin contract](docs/plugin-contract.md)
 - [Configuration](docs/config-spec.md)
 - [Themes](docs/theme-spec.md)
@@ -57,6 +58,12 @@ See [configuration](docs/config-spec.md), the [manager guide](docs/plugin-manage
 [launcher contract](docs/plugin-contract.md) for setup and operation. Repository
 maintainers should also read the [plugin repository contract](docs/plugin-repository-contract.md);
 the [manifest reference](docs/plugin-manifest.md) remains normative.
+
+The `teddytor` package also produces bundled sibling executables, including
+`teddy-ai`. `teddy-ai` is an out-of-process framed plugin shell that registers
+`ai` and currently replies `ai shell: no provider configured`; it has no AI
+provider or functional AI configuration. See the [cheatsheet](docs/cheatsheet.md)
+for direct use.
 
 ## Releases
 

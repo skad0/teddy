@@ -15,6 +15,15 @@ Regular development build
 Release build
 - cargo build --release
 
+Produced binaries
+- `teddy` — the editor
+- `teddy-ai` — bundled sibling framed plugin shell
+- `teddy-demo`, `teddy-highlight`, `teddy-lsp`, `teddy-manager`, and `teddy-session` — other bundled sibling executables
+
+These binaries are targets of the single `teddytor` package; `teddy-ai` is not
+a separate crate or catalog manager package. `cargo install teddytor` installs
+the package's binaries as supported by Cargo.
+
 Optimized small release (recommended)
 - cargo build --release
 Notes:
