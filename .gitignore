@@ -1,2 +1,7 @@
 /target
 .slim/deepwork/
+bench/corpus/
+bench/out/
+bench/artifacts/
+bench/__pycache__/
+bench/tests/__pycache__/

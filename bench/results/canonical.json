@@ -1,0 +1,4549 @@
+{
+  "artifact_root": {
+    "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341",
+    "resolvable_from": "repository root"
+  },
+  "cargo_package_version": "0.2.0",
+  "claims": {
+    "C1": {
+      "profiles": {
+        "bare": [
+          {
+            "artifact": {
+              "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c1/bare-c1-1.json",
+              "sha256": "ce34fc032e1fd82dbd52eaf7c8875224b5ae3af1126b5f4e85bd4f9e1449d54e",
+              "size": 4836
+            },
+            "elapsed_ms": 46.97304195724428,
+            "identity": true,
+            "process": {
+              "actions": [],
+              "cleanup_error": null,
+              "descendants": [],
+              "descendants_left": false,
+              "drain_complete": true,
+              "drain_deadline": false,
+              "drain_reason": "both channels reached EOF/EIO",
+              "endpoint_snapshots": [],
+              "exec_failed": false,
+              "exit": 0,
+              "final_drain": true,
+              "identity": {
+                "argv": [
+                  "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy",
+                  "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log"
+                ],
+                "observed": "53590 52989 /Users/kriant/w/ /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                "verified": true
+              },
+              "output_full_bytes": 4034,
+              "output_retained_bytes": 4034,
+              "pgid": 53590,
+              "pgid_after": [],
+              "pgid_after_probe_error": null,
+              "pgid_before": [
+                {
+                  "comm": "/Users/kriant/w/",
+                  "command": "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                  "pgid": 53590,
+                  "pid": 53590,
+                  "ppid": 52989
+                }
+              ],
+              "pgid_before_probe_error": null,
+              "pgid_probe_error": null,
+              "pty_eof": true,
+              "pty_output_capped": false,
+              "readiness": {
+                "event_index": 0,
+                "matched": true,
+                "matched_at": 0.04697304195724428,
+                "name": "c1_ready",
+                "snapshot": [
+                  " [s9-1g.log]",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixe",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  ""
+                ]
+              },
+              "reaped": true,
+              "screen": [
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                ""
+              ],
+              "signal": null,
+              "spawn": 0.0,
+              "stderr": "",
+              "stderr_capped": false,
+              "stderr_eof": true,
+              "stderr_full_bytes": 0,
+              "stderr_retained_bytes": 0,
+              "timed_out": false,
+              "trace_bytes": 4034,
+              "trace_discarded_bytes": 0,
+              "trace_retained_bytes": 4034,
+              "trace_sha256": "41825bae53195a0e1f93ea8216309d6ebf728193d48bb3773b49d8aec02be7c7",
+              "unsupported": []
+            },
+            "profile": "bare",
+            "rep": 1,
+            "rss_peak_bytes": 1884160,
+            "rss_samples": [
+              {
+                "at": 276392.607124041,
+                "members": [
+                  {
+                    "pid": 53590,
+                    "raw": "1840 53590 53590 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                    "rss_bytes": 1884160
+                  }
+                ],
+                "pgid": 53590,
+                "rss_bytes": 1884160
+              },
+              {
+                "at": 276392.648018833,
+                "members": [
+                  {
+                    "pid": 53590,
+                    "raw": "1840 53590 53590 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                    "rss_bytes": 1884160
+                  }
+                ],
+                "pgid": 53590,
+                "rss_bytes": 1884160
+              }
+            ],
+            "status": "PASS"
+          },
+          {
+            "artifact": {
+              "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c1/bare-c1-2.json",
+              "sha256": "54114b73fe7fd66af28a7d7374c6619a65c4d2913e32bfed7a812e03381fb20f",
+              "size": 4836
+            },
+            "elapsed_ms": 44.98249996686354,
+            "identity": true,
+            "process": {
+              "actions": [],
+              "cleanup_error": null,
+              "descendants": [],
+              "descendants_left": false,
+              "drain_complete": true,
+              "drain_deadline": false,
+              "drain_reason": "both channels reached EOF/EIO",
+              "endpoint_snapshots": [],
+              "exec_failed": false,
+              "exit": 0,
+              "final_drain": true,
+              "identity": {
+                "argv": [
+                  "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy",
+                  "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log"
+                ],
+                "observed": "53598 52989 /Users/kriant/w/ /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                "verified": true
+              },
+              "output_full_bytes": 4034,
+              "output_retained_bytes": 4034,
+              "pgid": 53598,
+              "pgid_after": [],
+              "pgid_after_probe_error": null,
+              "pgid_before": [
+                {
+                  "comm": "/Users/kriant/w/",
+                  "command": "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                  "pgid": 53598,
+                  "pid": 53598,
+                  "ppid": 52989
+                }
+              ],
+              "pgid_before_probe_error": null,
+              "pgid_probe_error": null,
+              "pty_eof": true,
+              "pty_output_capped": false,
+              "readiness": {
+                "event_index": 0,
+                "matched": true,
+                "matched_at": 0.04498249996686354,
+                "name": "c1_ready",
+                "snapshot": [
+                  " [s9-1g.log]",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixe",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  ""
+                ]
+              },
+              "reaped": true,
+              "screen": [
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                ""
+              ],
+              "signal": null,
+              "spawn": 0.0,
+              "stderr": "",
+              "stderr_capped": false,
+              "stderr_eof": true,
+              "stderr_full_bytes": 0,
+              "stderr_retained_bytes": 0,
+              "timed_out": false,
+              "trace_bytes": 4034,
+              "trace_discarded_bytes": 0,
+              "trace_retained_bytes": 4034,
+              "trace_sha256": "41825bae53195a0e1f93ea8216309d6ebf728193d48bb3773b49d8aec02be7c7",
+              "unsupported": []
+            },
+            "profile": "bare",
+            "rep": 2,
+            "rss_peak_bytes": 1867776,
+            "rss_samples": [
+              {
+                "at": 276392.792563916,
+                "members": [
+                  {
+                    "pid": 53598,
+                    "raw": "1824 53598 53598 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                    "rss_bytes": 1867776
+                  }
+                ],
+                "pgid": 53598,
+                "rss_bytes": 1867776
+              },
+              {
+                "at": 276392.832948041,
+                "members": [
+                  {
+                    "pid": 53598,
+                    "raw": "1824 53598 53598 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                    "rss_bytes": 1867776
+                  }
+                ],
+                "pgid": 53598,
+                "rss_bytes": 1867776
+              }
+            ],
+            "status": "PASS"
+          },
+          {
+            "artifact": {
+              "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c1/bare-c1-3.json",
+              "sha256": "7aa3e309ff55bf77971dc0e26d8305b189d8383b498625920d7c01a7657cfdfc",
+              "size": 4836
+            },
+            "elapsed_ms": 44.97920797439292,
+            "identity": true,
+            "process": {
+              "actions": [],
+              "cleanup_error": null,
+              "descendants": [],
+              "descendants_left": false,
+              "drain_complete": true,
+              "drain_deadline": false,
+              "drain_reason": "both channels reached EOF/EIO",
+              "endpoint_snapshots": [],
+              "exec_failed": false,
+              "exit": 0,
+              "final_drain": true,
+              "identity": {
+                "argv": [
+                  "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy",
+                  "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log"
+                ],
+                "observed": "53606 52989 /Users/kriant/w/ /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                "verified": true
+              },
+              "output_full_bytes": 4034,
+              "output_retained_bytes": 4034,
+              "pgid": 53606,
+              "pgid_after": [],
+              "pgid_after_probe_error": null,
+              "pgid_before": [
+                {
+                  "comm": "/Users/kriant/w/",
+                  "command": "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                  "pgid": 53606,
+                  "pid": 53606,
+                  "ppid": 52989
+                }
+              ],
+              "pgid_before_probe_error": null,
+              "pgid_probe_error": null,
+              "pty_eof": true,
+              "pty_output_capped": false,
+              "readiness": {
+                "event_index": 0,
+                "matched": true,
+                "matched_at": 0.04497920797439292,
+                "name": "c1_ready",
+                "snapshot": [
+                  " [s9-1g.log]",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixe",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  ""
+                ]
+              },
+              "reaped": true,
+              "screen": [
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                ""
+              ],
+              "signal": null,
+              "spawn": 0.0,
+              "stderr": "",
+              "stderr_capped": false,
+              "stderr_eof": true,
+              "stderr_full_bytes": 0,
+              "stderr_retained_bytes": 0,
+              "timed_out": false,
+              "trace_bytes": 4034,
+              "trace_discarded_bytes": 0,
+              "trace_retained_bytes": 4034,
+              "trace_sha256": "41825bae53195a0e1f93ea8216309d6ebf728193d48bb3773b49d8aec02be7c7",
+              "unsupported": []
+            },
+            "profile": "bare",
+            "rep": 3,
+            "rss_peak_bytes": 1867776,
+            "rss_samples": [
+              {
+                "at": 276392.965530333,
+                "members": [
+                  {
+                    "pid": 53606,
+                    "raw": "1824 53606 53606 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                    "rss_bytes": 1867776
+                  }
+                ],
+                "pgid": 53606,
+                "rss_bytes": 1867776
+              },
+              {
+                "at": 276393.006519625,
+                "members": [
+                  {
+                    "pid": 53606,
+                    "raw": "1824 53606 53606 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                    "rss_bytes": 1867776
+                  }
+                ],
+                "pgid": 53606,
+                "rss_bytes": 1867776
+              }
+            ],
+            "status": "PASS"
+          },
+          {
+            "artifact": {
+              "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c1/bare-c1-4.json",
+              "sha256": "b3d5986257da8264f343ff56670bd48d0e50c167f08a521453dbc7c5a3668f92",
+              "size": 4834
+            },
+            "elapsed_ms": 46.24274995876476,
+            "identity": true,
+            "process": {
+              "actions": [],
+              "cleanup_error": null,
+              "descendants": [],
+              "descendants_left": false,
+              "drain_complete": true,
+              "drain_deadline": false,
+              "drain_reason": "both channels reached EOF/EIO",
+              "endpoint_snapshots": [],
+              "exec_failed": false,
+              "exit": 0,
+              "final_drain": true,
+              "identity": {
+                "argv": [
+                  "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy",
+                  "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log"
+                ],
+                "observed": "53614 52989 /Users/kriant/w/ /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                "verified": true
+              },
+              "output_full_bytes": 4034,
+              "output_retained_bytes": 4034,
+              "pgid": 53614,
+              "pgid_after": [],
+              "pgid_after_probe_error": null,
+              "pgid_before": [
+                {
+                  "comm": "/Users/kriant/w/",
+                  "command": "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                  "pgid": 53614,
+                  "pid": 53614,
+                  "ppid": 52989
+                }
+              ],
+              "pgid_before_probe_error": null,
+              "pgid_probe_error": null,
+              "pty_eof": true,
+              "pty_output_capped": false,
+              "readiness": {
+                "event_index": 0,
+                "matched": true,
+                "matched_at": 0.04624274995876476,
+                "name": "c1_ready",
+                "snapshot": [
+                  " [s9-1g.log]",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixe",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  ""
+                ]
+              },
+              "reaped": true,
+              "screen": [
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                ""
+              ],
+              "signal": null,
+              "spawn": 0.0,
+              "stderr": "",
+              "stderr_capped": false,
+              "stderr_eof": true,
+              "stderr_full_bytes": 0,
+              "stderr_retained_bytes": 0,
+              "timed_out": false,
+              "trace_bytes": 4034,
+              "trace_discarded_bytes": 0,
+              "trace_retained_bytes": 4034,
+              "trace_sha256": "41825bae53195a0e1f93ea8216309d6ebf728193d48bb3773b49d8aec02be7c7",
+              "unsupported": []
+            },
+            "profile": "bare",
+            "rep": 4,
+            "rss_peak_bytes": 1884160,
+            "rss_samples": [
+              {
+                "at": 276393.1392245,
+                "members": [
+                  {
+                    "pid": 53614,
+                    "raw": "1840 53614 53614 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                    "rss_bytes": 1884160
+                  }
+                ],
+                "pgid": 53614,
+                "rss_bytes": 1884160
+              },
+              {
+                "at": 276393.180698208,
+                "members": [
+                  {
+                    "pid": 53614,
+                    "raw": "1840 53614 53614 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                    "rss_bytes": 1884160
+                  }
+                ],
+                "pgid": 53614,
+                "rss_bytes": 1884160
+              }
+            ],
+            "status": "PASS"
+          },
+          {
+            "artifact": {
+              "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c1/bare-c1-5.json",
+              "sha256": "a3abb63fa3f76b41b44ed5cc88839696bcab34c580fe068a8d9fba9dfc794ebc",
+              "size": 4835
+            },
+            "elapsed_ms": 46.82424996281043,
+            "identity": true,
+            "process": {
+              "actions": [],
+              "cleanup_error": null,
+              "descendants": [],
+              "descendants_left": false,
+              "drain_complete": true,
+              "drain_deadline": false,
+              "drain_reason": "both channels reached EOF/EIO",
+              "endpoint_snapshots": [],
+              "exec_failed": false,
+              "exit": 0,
+              "final_drain": true,
+              "identity": {
+                "argv": [
+                  "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy",
+                  "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log"
+                ],
+                "observed": "53630 52989 /Users/kriant/w/ /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                "verified": true
+              },
+              "output_full_bytes": 4034,
+              "output_retained_bytes": 4034,
+              "pgid": 53630,
+              "pgid_after": [],
+              "pgid_after_probe_error": null,
+              "pgid_before": [
+                {
+                  "comm": "/Users/kriant/w/",
+                  "command": "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                  "pgid": 53630,
+                  "pid": 53630,
+                  "ppid": 52989
+                }
+              ],
+              "pgid_before_probe_error": null,
+              "pgid_probe_error": null,
+              "pty_eof": true,
+              "pty_output_capped": false,
+              "readiness": {
+                "event_index": 0,
+                "matched": true,
+                "matched_at": 0.04682424996281043,
+                "name": "c1_ready",
+                "snapshot": [
+                  " [s9-1g.log]",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixe",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  ""
+                ]
+              },
+              "reaped": true,
+              "screen": [
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                ""
+              ],
+              "signal": null,
+              "spawn": 0.0,
+              "stderr": "",
+              "stderr_capped": false,
+              "stderr_eof": true,
+              "stderr_full_bytes": 0,
+              "stderr_retained_bytes": 0,
+              "timed_out": false,
+              "trace_bytes": 4034,
+              "trace_discarded_bytes": 0,
+              "trace_retained_bytes": 4034,
+              "trace_sha256": "41825bae53195a0e1f93ea8216309d6ebf728193d48bb3773b49d8aec02be7c7",
+              "unsupported": []
+            },
+            "profile": "bare",
+            "rep": 5,
+            "rss_peak_bytes": 1884160,
+            "rss_samples": [
+              {
+                "at": 276393.314339333,
+                "members": [
+                  {
+                    "pid": 53630,
+                    "raw": "1840 53630 53630 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                    "rss_bytes": 1884160
+                  }
+                ],
+                "pgid": 53630,
+                "rss_bytes": 1884160
+              },
+              {
+                "at": 276393.35493025,
+                "members": [
+                  {
+                    "pid": 53630,
+                    "raw": "1840 53630 53630 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                    "rss_bytes": 1884160
+                  }
+                ],
+                "pgid": 53630,
+                "rss_bytes": 1884160
+              }
+            ],
+            "status": "PASS"
+          }
+        ],
+        "shipped": [
+          {
+            "artifact": {
+              "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c1/shipped-c1-1.json",
+              "sha256": "00a3d3a7ec726910761bb9205f4a56474be195e3a7a842149e8d617851026051",
+              "size": 5437
+            },
+            "elapsed_ms": 84.38487502280623,
+            "identity": true,
+            "process": {
+              "actions": [],
+              "cleanup_error": null,
+              "descendants": [],
+              "descendants_left": false,
+              "drain_complete": true,
+              "drain_deadline": false,
+              "drain_reason": "both channels reached EOF/EIO",
+              "endpoint_snapshots": [],
+              "exec_failed": false,
+              "exit": 0,
+              "final_drain": true,
+              "identity": {
+                "argv": [
+                  "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy",
+                  "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log"
+                ],
+                "observed": "53638 52989 /Users/kriant/w/ /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                "verified": true
+              },
+              "output_full_bytes": 4052,
+              "output_retained_bytes": 4052,
+              "pgid": 53638,
+              "pgid_after": [],
+              "pgid_after_probe_error": null,
+              "pgid_before": [
+                {
+                  "comm": "/Users/kriant/w/",
+                  "command": "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                  "pgid": 53638,
+                  "pid": 53638,
+                  "ppid": 52989
+                },
+                {
+                  "comm": "<defunct>",
+                  "command": "<defunct>",
+                  "pgid": 53638,
+                  "pid": 53640,
+                  "ppid": 53638
+                }
+              ],
+              "pgid_before_probe_error": null,
+              "pgid_probe_error": null,
+              "pty_eof": true,
+              "pty_output_capped": false,
+              "readiness": {
+                "event_index": 0,
+                "matched": true,
+                "matched_at": 0.08438487502280623,
+                "name": "c1_ready",
+                "snapshot": [
+                  " [s9-1g.log]",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixe",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  ""
+                ]
+              },
+              "reaped": true,
+              "screen": [
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                ""
+              ],
+              "signal": null,
+              "spawn": 0.0,
+              "stderr": "",
+              "stderr_capped": false,
+              "stderr_eof": true,
+              "stderr_full_bytes": 0,
+              "stderr_retained_bytes": 0,
+              "timed_out": false,
+              "trace_bytes": 4052,
+              "trace_discarded_bytes": 0,
+              "trace_retained_bytes": 4052,
+              "trace_sha256": "20dc5754d3c8f860dd2026cff5bedcdac9402e918d04c34e0df6501f90702475",
+              "unsupported": []
+            },
+            "profile": "shipped",
+            "rep": 1,
+            "rss_peak_bytes": 3358720,
+            "rss_samples": [
+              {
+                "at": 276393.526508625,
+                "members": [
+                  {
+                    "pid": 53638,
+                    "raw": "1840 53638 53638 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                    "rss_bytes": 1884160
+                  },
+                  {
+                    "pid": 53640,
+                    "raw": "1440 53640 53638 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy-highlight",
+                    "rss_bytes": 1474560
+                  }
+                ],
+                "pgid": 53638,
+                "rss_bytes": 3358720
+              },
+              {
+                "at": 276393.591407583,
+                "members": [
+                  {
+                    "pid": 53638,
+                    "raw": "1840 53638 53638 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                    "rss_bytes": 1884160
+                  },
+                  {
+                    "pid": 53640,
+                    "raw": "1440 53640 53638 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy-highlight",
+                    "rss_bytes": 1474560
+                  }
+                ],
+                "pgid": 53638,
+                "rss_bytes": 3358720
+              }
+            ],
+            "status": "PASS"
+          },
+          {
+            "artifact": {
+              "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c1/shipped-c1-2.json",
+              "sha256": "e3b7a030d24cb0e9185e9cac65704fa234ed728d17743302e05987b7d4fc0ec6",
+              "size": 5434
+            },
+            "elapsed_ms": 48.45379205653444,
+            "identity": true,
+            "process": {
+              "actions": [],
+              "cleanup_error": null,
+              "descendants": [],
+              "descendants_left": false,
+              "drain_complete": true,
+              "drain_deadline": false,
+              "drain_reason": "both channels reached EOF/EIO",
+              "endpoint_snapshots": [],
+              "exec_failed": false,
+              "exit": 0,
+              "final_drain": true,
+              "identity": {
+                "argv": [
+                  "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy",
+                  "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log"
+                ],
+                "observed": "53649 52989 /Users/kriant/w/ /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                "verified": true
+              },
+              "output_full_bytes": 4052,
+              "output_retained_bytes": 4052,
+              "pgid": 53649,
+              "pgid_after": [],
+              "pgid_after_probe_error": null,
+              "pgid_before": [
+                {
+                  "comm": "/Users/kriant/w/",
+                  "command": "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                  "pgid": 53649,
+                  "pid": 53649,
+                  "ppid": 52989
+                },
+                {
+                  "comm": "<defunct>",
+                  "command": "<defunct>",
+                  "pgid": 53649,
+                  "pid": 53651,
+                  "ppid": 53649
+                }
+              ],
+              "pgid_before_probe_error": null,
+              "pgid_probe_error": null,
+              "pty_eof": true,
+              "pty_output_capped": false,
+              "readiness": {
+                "event_index": 0,
+                "matched": true,
+                "matched_at": 0.04845379205653444,
+                "name": "c1_ready",
+                "snapshot": [
+                  " [s9-1g.log]",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixe",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  ""
+                ]
+              },
+              "reaped": true,
+              "screen": [
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                ""
+              ],
+              "signal": null,
+              "spawn": 0.0,
+              "stderr": "",
+              "stderr_capped": false,
+              "stderr_eof": true,
+              "stderr_full_bytes": 0,
+              "stderr_retained_bytes": 0,
+              "timed_out": false,
+              "trace_bytes": 4052,
+              "trace_discarded_bytes": 0,
+              "trace_retained_bytes": 4052,
+              "trace_sha256": "20dc5754d3c8f860dd2026cff5bedcdac9402e918d04c34e0df6501f90702475",
+              "unsupported": []
+            },
+            "profile": "shipped",
+            "rep": 2,
+            "rss_peak_bytes": 3358720,
+            "rss_samples": [
+              {
+                "at": 276393.727563583,
+                "members": [
+                  {
+                    "pid": 53649,
+                    "raw": "1840 53649 53649 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                    "rss_bytes": 1884160
+                  },
+                  {
+                    "pid": 53651,
+                    "raw": "1440 53651 53649 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy-highlight",
+                    "rss_bytes": 1474560
+                  }
+                ],
+                "pgid": 53649,
+                "rss_bytes": 3358720
+              },
+              {
+                "at": 276393.774031,
+                "members": [
+                  {
+                    "pid": 53649,
+                    "raw": "1840 53649 53649 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                    "rss_bytes": 1884160
+                  },
+                  {
+                    "pid": 53651,
+                    "raw": "1440 53651 53649 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy-highlight",
+                    "rss_bytes": 1474560
+                  }
+                ],
+                "pgid": 53649,
+                "rss_bytes": 3358720
+              }
+            ],
+            "status": "PASS"
+          },
+          {
+            "artifact": {
+              "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c1/shipped-c1-3.json",
+              "sha256": "5cb39b7e5cdfe953e171f85a43bc19f9bb63f1567e3e0753afd894bf30e2b8e2",
+              "size": 5436
+            },
+            "elapsed_ms": 47.03570803394541,
+            "identity": true,
+            "process": {
+              "actions": [],
+              "cleanup_error": null,
+              "descendants": [],
+              "descendants_left": false,
+              "drain_complete": true,
+              "drain_deadline": false,
+              "drain_reason": "both channels reached EOF/EIO",
+              "endpoint_snapshots": [],
+              "exec_failed": false,
+              "exit": 0,
+              "final_drain": true,
+              "identity": {
+                "argv": [
+                  "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy",
+                  "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log"
+                ],
+                "observed": "53660 52989 /Users/kriant/w/ /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                "verified": true
+              },
+              "output_full_bytes": 4052,
+              "output_retained_bytes": 4052,
+              "pgid": 53660,
+              "pgid_after": [],
+              "pgid_after_probe_error": null,
+              "pgid_before": [
+                {
+                  "comm": "/Users/kriant/w/",
+                  "command": "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                  "pgid": 53660,
+                  "pid": 53660,
+                  "ppid": 52989
+                },
+                {
+                  "comm": "<defunct>",
+                  "command": "<defunct>",
+                  "pgid": 53660,
+                  "pid": 53662,
+                  "ppid": 53660
+                }
+              ],
+              "pgid_before_probe_error": null,
+              "pgid_probe_error": null,
+              "pty_eof": true,
+              "pty_output_capped": false,
+              "readiness": {
+                "event_index": 0,
+                "matched": true,
+                "matched_at": 0.04703570803394541,
+                "name": "c1_ready",
+                "snapshot": [
+                  " [s9-1g.log]",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixe",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  ""
+                ]
+              },
+              "reaped": true,
+              "screen": [
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                ""
+              ],
+              "signal": null,
+              "spawn": 0.0,
+              "stderr": "",
+              "stderr_capped": false,
+              "stderr_eof": true,
+              "stderr_full_bytes": 0,
+              "stderr_retained_bytes": 0,
+              "timed_out": false,
+              "trace_bytes": 4052,
+              "trace_discarded_bytes": 0,
+              "trace_retained_bytes": 4052,
+              "trace_sha256": "20dc5754d3c8f860dd2026cff5bedcdac9402e918d04c34e0df6501f90702475",
+              "unsupported": []
+            },
+            "profile": "shipped",
+            "rep": 3,
+            "rss_peak_bytes": 3358720,
+            "rss_samples": [
+              {
+                "at": 276393.91010925,
+                "members": [
+                  {
+                    "pid": 53660,
+                    "raw": "1840 53660 53660 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                    "rss_bytes": 1884160
+                  },
+                  {
+                    "pid": 53662,
+                    "raw": "1440 53662 53660 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy-highlight",
+                    "rss_bytes": 1474560
+                  }
+                ],
+                "pgid": 53660,
+                "rss_bytes": 3358720
+              },
+              {
+                "at": 276393.955084375,
+                "members": [
+                  {
+                    "pid": 53660,
+                    "raw": "1840 53660 53660 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                    "rss_bytes": 1884160
+                  },
+                  {
+                    "pid": 53662,
+                    "raw": "1440 53662 53660 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy-highlight",
+                    "rss_bytes": 1474560
+                  }
+                ],
+                "pgid": 53660,
+                "rss_bytes": 3358720
+              }
+            ],
+            "status": "PASS"
+          },
+          {
+            "artifact": {
+              "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c1/shipped-c1-4.json",
+              "sha256": "4a71af4d2c4427b49cd658c19d70c51681fac8cedb6841cf1354e563e96fe6bf",
+              "size": 5436
+            },
+            "elapsed_ms": 48.96308301249519,
+            "identity": true,
+            "process": {
+              "actions": [],
+              "cleanup_error": null,
+              "descendants": [],
+              "descendants_left": false,
+              "drain_complete": true,
+              "drain_deadline": false,
+              "drain_reason": "both channels reached EOF/EIO",
+              "endpoint_snapshots": [],
+              "exec_failed": false,
+              "exit": 0,
+              "final_drain": true,
+              "identity": {
+                "argv": [
+                  "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy",
+                  "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log"
+                ],
+                "observed": "53673 52989 /Users/kriant/w/ /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                "verified": true
+              },
+              "output_full_bytes": 4052,
+              "output_retained_bytes": 4052,
+              "pgid": 53673,
+              "pgid_after": [],
+              "pgid_after_probe_error": null,
+              "pgid_before": [
+                {
+                  "comm": "/Users/kriant/w/",
+                  "command": "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                  "pgid": 53673,
+                  "pid": 53673,
+                  "ppid": 52989
+                },
+                {
+                  "comm": "<defunct>",
+                  "command": "<defunct>",
+                  "pgid": 53673,
+                  "pid": 53675,
+                  "ppid": 53673
+                }
+              ],
+              "pgid_before_probe_error": null,
+              "pgid_probe_error": null,
+              "pty_eof": true,
+              "pty_output_capped": false,
+              "readiness": {
+                "event_index": 0,
+                "matched": true,
+                "matched_at": 0.04896308301249519,
+                "name": "c1_ready",
+                "snapshot": [
+                  " [s9-1g.log]",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixe",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  ""
+                ]
+              },
+              "reaped": true,
+              "screen": [
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                ""
+              ],
+              "signal": null,
+              "spawn": 0.0,
+              "stderr": "",
+              "stderr_capped": false,
+              "stderr_eof": true,
+              "stderr_full_bytes": 0,
+              "stderr_retained_bytes": 0,
+              "timed_out": false,
+              "trace_bytes": 4052,
+              "trace_discarded_bytes": 0,
+              "trace_retained_bytes": 4052,
+              "trace_sha256": "20dc5754d3c8f860dd2026cff5bedcdac9402e918d04c34e0df6501f90702475",
+              "unsupported": []
+            },
+            "profile": "shipped",
+            "rep": 4,
+            "rss_peak_bytes": 3358720,
+            "rss_samples": [
+              {
+                "at": 276394.089858833,
+                "members": [
+                  {
+                    "pid": 53673,
+                    "raw": "1840 53673 53673 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                    "rss_bytes": 1884160
+                  },
+                  {
+                    "pid": 53675,
+                    "raw": "1440 53675 53673 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy-highlight",
+                    "rss_bytes": 1474560
+                  }
+                ],
+                "pgid": 53673,
+                "rss_bytes": 3358720
+              },
+              {
+                "at": 276394.14104475,
+                "members": [
+                  {
+                    "pid": 53673,
+                    "raw": "1840 53673 53673 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                    "rss_bytes": 1884160
+                  },
+                  {
+                    "pid": 53675,
+                    "raw": "1440 53675 53673 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy-highlight",
+                    "rss_bytes": 1474560
+                  }
+                ],
+                "pgid": 53673,
+                "rss_bytes": 3358720
+              }
+            ],
+            "status": "PASS"
+          },
+          {
+            "artifact": {
+              "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c1/shipped-c1-5.json",
+              "sha256": "71726f93ac85729a45d063d87c48f8cc97f619527a578ac8017dd81e20cdae64",
+              "size": 5438
+            },
+            "elapsed_ms": 47.780041000805795,
+            "identity": true,
+            "process": {
+              "actions": [],
+              "cleanup_error": null,
+              "descendants": [],
+              "descendants_left": false,
+              "drain_complete": true,
+              "drain_deadline": false,
+              "drain_reason": "both channels reached EOF/EIO",
+              "endpoint_snapshots": [],
+              "exec_failed": false,
+              "exit": 0,
+              "final_drain": true,
+              "identity": {
+                "argv": [
+                  "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy",
+                  "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log"
+                ],
+                "observed": "53692 52989 /Users/kriant/w/ /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                "verified": true
+              },
+              "output_full_bytes": 4052,
+              "output_retained_bytes": 4052,
+              "pgid": 53692,
+              "pgid_after": [],
+              "pgid_after_probe_error": null,
+              "pgid_before": [
+                {
+                  "comm": "/Users/kriant/w/",
+                  "command": "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                  "pgid": 53692,
+                  "pid": 53692,
+                  "ppid": 52989
+                },
+                {
+                  "comm": "<defunct>",
+                  "command": "<defunct>",
+                  "pgid": 53692,
+                  "pid": 53694,
+                  "ppid": 53692
+                }
+              ],
+              "pgid_before_probe_error": null,
+              "pgid_probe_error": null,
+              "pty_eof": true,
+              "pty_output_capped": false,
+              "readiness": {
+                "event_index": 0,
+                "matched": true,
+                "matched_at": 0.047780041000805795,
+                "name": "c1_ready",
+                "snapshot": [
+                  " [s9-1g.log]",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixe",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  ""
+                ]
+              },
+              "reaped": true,
+              "screen": [
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                ""
+              ],
+              "signal": null,
+              "spawn": 0.0,
+              "stderr": "",
+              "stderr_capped": false,
+              "stderr_eof": true,
+              "stderr_full_bytes": 0,
+              "stderr_retained_bytes": 0,
+              "timed_out": false,
+              "trace_bytes": 4052,
+              "trace_discarded_bytes": 0,
+              "trace_retained_bytes": 4052,
+              "trace_sha256": "20dc5754d3c8f860dd2026cff5bedcdac9402e918d04c34e0df6501f90702475",
+              "unsupported": []
+            },
+            "profile": "shipped",
+            "rep": 5,
+            "rss_peak_bytes": 3358720,
+            "rss_samples": [
+              {
+                "at": 276394.27633225,
+                "members": [
+                  {
+                    "pid": 53692,
+                    "raw": "1840 53692 53692 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                    "rss_bytes": 1884160
+                  },
+                  {
+                    "pid": 53694,
+                    "raw": "1440 53694 53692 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy-highlight",
+                    "rss_bytes": 1474560
+                  }
+                ],
+                "pgid": 53692,
+                "rss_bytes": 3358720
+              },
+              {
+                "at": 276394.320003208,
+                "members": [
+                  {
+                    "pid": 53692,
+                    "raw": "1840 53692 53692 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                    "rss_bytes": 1884160
+                  },
+                  {
+                    "pid": 53694,
+                    "raw": "1440 53694 53692 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy-highlight",
+                    "rss_bytes": 1474560
+                  }
+                ],
+                "pgid": 53692,
+                "rss_bytes": 3358720
+              }
+            ],
+            "status": "PASS"
+          }
+        ]
+      },
+      "quantiles_ms": {
+        "bare": {
+          "count": 5,
+          "p50": 46.24274995876476,
+          "p95": 46.94328355835751
+        },
+        "shipped": {
+          "count": 5,
+          "p50": 48.45379205653444,
+          "p95": 77.30051662074402
+        }
+      },
+      "reason": "validated teddy-only warm PTY repetitions; predeclared p95 threshold is 50ms",
+      "status": "FAIL"
+    },
+    "C2": {
+      "attempts": [
+        {
+          "action": true,
+          "association": "none",
+          "clean": true,
+          "line_count": 1,
+          "log": {
+            "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c2-bare.log",
+            "sha256": "e6bda1b117a61b27db7d6e1816b42928668dac0011fbf3c60805c87e3ff29b5f",
+            "size": 12
+          },
+          "parsed_rows": [
+            {
+              "allocs": 5,
+              "frame_bytes": 3730,
+              "us": 2064.0
+            }
+          ],
+          "process": {
+            "actions": [
+              {
+                "bytes": "1b5b367e",
+                "endpoint": 0.023290457960683852,
+                "endpoint_event_index": 5,
+                "endpoint_found": true,
+                "first_output_after_write": 0.023290457960683852,
+                "last_output": 0.025825082964729518,
+                "name": "perf_page",
+                "output_event_count": 4,
+                "output_event_sequence_at_write": 5,
+                "quiet_complete": 0.03340958297485486,
+                "quiet_gap": 0.007584500010125339,
+                "write": 0.023116249998565763
+              }
+            ],
+            "cleanup_error": null,
+            "descendants": [],
+            "descendants_left": false,
+            "drain_complete": true,
+            "drain_deadline": false,
+            "drain_reason": "both channels reached EOF/EIO",
+            "endpoint_snapshots": [
+              {
+                "at": 0.023290457960683852,
+                "kind": "action",
+                "name": "perf_page",
+                "rows": [
+                  " [code-1m.rs]",
+                  "S9_ROW_00001 source_like_fixed_line_00001 return 001;",
+                  "S9_ROW_00002 source_like_fixed_line_00002 return 002;",
+                  "S9_ROW_00003 source_like_fixed_line_00003 return 003;",
+                  "S9_ROW_00004 source_like_fixed_line_00004 return 004;",
+                  "S9_ROW_00005 source_like_fixed_line_00005 return 005;",
+                  "S9_ROW_00006 source_like_fixed_line_00006 return 006;",
+                  "S9_ROW_00007 source_like_fixed_line_00007 return 007;",
+                  "S9_ROW_00008 source_like_fixed_line_00008 return 008;",
+                  "S9_ROW_00009 source_like_fixed_line_00009 return 009;",
+                  "S9_ROW_00010 source_like_fixed_line_00010 return 010;",
+                  "S9_ROW_00011 source_like_fixed_line_00011 return 011;",
+                  "S9_ROW_00012 source_like_fixed_line_00012 return 012;",
+                  "S9_ROW_00013 source_like_fixed_line_00013 return 013;",
+                  "S9_ROW_00014 source_like_fixed_line_00014 return 014;",
+                  "S9_ROW_00014 source_like_fixed_line_00014 return 014;",
+                  "S9_ROW_00015 source_like_fixed_line_00015 return 015;",
+                  "S9_ROW_00016 source_like_fixed_line_00016 return 016;",
+                  "S9_ROW_00017 source_like_fixed_line_00017 return 017;",
+                  "S9_ROW_00018 source_like_fixed_line_00018 return 018;",
+                  "S9_ROW_00019 source_like_fixed_line_00019 return 019;",
+                  "S9_ROW_00020 source_like_fixed_line_00020 return 020;",
+                  "S9_ROW_00021 source_like_fixed_line_00021 return 021;",
+                  "S9_ROW_00022 source_like_fixed_line_00022 return 022;",
+                  "S9_ROW_00023 source_like_fixed_line_00023 return 023;",
+                  "S9_ROW_00024 source_like_fixed_line_00024 return 024;",
+                  "S9_ROW_00025 source_like_fixed_line_00025 return 025;",
+                  "S9_ROW_00026 source_like_fixed_line_00026 return 026;",
+                  "S9_ROW_00027 source_like_fixed_line_00027 return 027;",
+                  "S9_ROW_00028 source_like_fixed_line_00028 return 028;",
+                  "S9_ROW_00029 source_like_fixed_line_00029 return 029;",
+                  "S9_ROW_00030 source_like_fixed_line_00030 return 030;",
+                  "S9_ROW_00031 source_like_fixed_line_00031 return 031;",
+                  "S9_ROW_00032 source_like_fixed_line_00032 return 032;",
+                  "S9_ROW_00033 source_like_fixed_line_00033 return 033;",
+                  "S9_ROW_00034 source_like_fixed_line_00034 return 034;",
+                  "S9_ROW_00035 source_like_fixed_line_00035 return 035;",
+                  "S9_ROW_00036 source_like_fixed_line_00036 return 036;",
+                  "S9_ROW_00037 source_like_fixed_line_00037 return 037;",
+                  "S9_ROW_00038 source_like_fixed_line_00038 return 038;",
+                  "S9_ROW_00039 source_like_fixed_line_00039 return 039;",
+                  "S9_ROW_00040 source_like_fixed_line_00040 return 040;",
+                  "S9_ROW_00041 source_like_fixed_line_00041 return 041;",
+                  "S9_ROW_00042 source_like_fixed_line_00042 return 042;",
+                  "S9_ROW_00043 source_like_fixed_line_00043 return 043;",
+                  "S9_ROW_00044 source_like_fixed_line_00044 return 044;",
+                  "S9_ROW_00045 source_like_fixed_line_00045 return 045;",
+                  "S9_ROW_00046 source_like_fixed_line_00046 return 046;",
+                  "S9_ROW_00047 source_like_fixed_line_00047 return 047;",
+                  " code-1m.rs                                                                                                                                                                    Ln 1, Col 1  Ctrl+Q quit"
+                ],
+                "sha256": "2d81e92b0689d0aab9db51f43f9d87bff0ebe3f1fe4023b495b4b81ee8268b89"
+              }
+            ],
+            "exec_failed": false,
+            "exit": 0,
+            "final_drain": true,
+            "identity": {
+              "argv": [
+                "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/perf-profiles/bare/teddy",
+                "/Users/kriant/w/teddy/bench/corpus/code-1m.rs"
+              ],
+              "observed": "54156 52989 /Users/kriant/w/ /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/perf-profiles/bare/teddy /Users/kriant/w/teddy/bench/corpus/code-1m.rs",
+              "verified": true
+            },
+            "output_full_bytes": 7716,
+            "output_retained_bytes": 7716,
+            "pgid": 54156,
+            "pgid_after": [],
+            "pgid_after_probe_error": null,
+            "pgid_before": [
+              {
+                "comm": "/Users/kriant/w/",
+                "command": "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/perf-profiles/bare/teddy /Users/kriant/w/teddy/bench/corpus/code-1m.rs",
+                "pgid": 54156,
+                "pid": 54156,
+                "ppid": 52989
+              }
+            ],
+            "pgid_before_probe_error": null,
+            "pgid_probe_error": null,
+            "pty_eof": true,
+            "pty_output_capped": false,
+            "readiness": {
+              "event_index": 1,
+              "matched": true,
+              "matched_at": 0.00583279097918421,
+              "name": "readiness",
+              "snapshot": [
+                " [code-1m.rs]",
+                "S9_ROW_00000 source_like_fixed_line_00000 return 000;",
+                "S9_ROW_00001 source_like_fixed_line_00001 return 001;",
+                "S9_ROW_00002 source_like_fixed_line_00002 return 002;",
+                "S9_ROW_00003 source_like_fixed_line_00003 return 003;",
+                "S9_ROW_00004 source_like_fixed_line_00004 return 004;",
+                "S9_ROW_00005 source_like_fixed_line_00005 return 005;",
+                "S9_ROW_00006 source_like_fixed_line_00006 return 006;",
+                "S9_ROW_00007 source_like_fixed_line_00007 return 007;",
+                "S9_ROW_00008 source_like_fixed_line_00008 return 008;",
+                "S9_ROW_00009 source_like_fixed_line_00009 return 009;",
+                "S9_ROW_00010 source_like_fixed_line_00010 return 010;",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                ""
+              ]
+            },
+            "reaped": true,
+            "screen": [
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              ""
+            ],
+            "signal": null,
+            "spawn": 0.0,
+            "stderr": "",
+            "stderr_capped": false,
+            "stderr_eof": true,
+            "stderr_full_bytes": 0,
+            "stderr_retained_bytes": 0,
+            "timed_out": false,
+            "trace_bytes": 7716,
+            "trace_discarded_bytes": 0,
+            "trace_retained_bytes": 7716,
+            "trace_sha256": "e36068722a3bb7c22dc9a4edeeb68b2bc837fc8a811ffe9220e918c8a8c0ecd1",
+            "unsupported": []
+          },
+          "profile": "bare",
+          "ready": true
+        },
+        {
+          "action": true,
+          "association": "none",
+          "clean": true,
+          "line_count": 1,
+          "log": {
+            "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c2-shipped.log",
+            "sha256": "cebd2c8f9fca8074370af27e8db25c7b488e11cecf8d62ab486d37368cf2b8d1",
+            "size": 13
+          },
+          "parsed_rows": [
+            {
+              "allocs": 10,
+              "frame_bytes": 5170,
+              "us": 2150.0
+            }
+          ],
+          "process": {
+            "actions": [
+              {
+                "bytes": "1b5b367e",
+                "endpoint": 0.024747999967075884,
+                "endpoint_event_index": 10,
+                "endpoint_found": true,
+                "first_output_after_write": 0.024747999967075884,
+                "last_output": 0.027238084003329277,
+                "name": "perf_page",
+                "output_event_count": 6,
+                "output_event_sequence_at_write": 10,
+                "quiet_complete": 0.03478654200443998,
+                "quiet_gap": 0.007548458001110703,
+                "write": 0.02462087495950982
+              }
+            ],
+            "cleanup_error": null,
+            "descendants": [],
+            "descendants_left": false,
+            "drain_complete": true,
+            "drain_deadline": false,
+            "drain_reason": "both channels reached EOF/EIO",
+            "endpoint_snapshots": [
+              {
+                "at": 0.024747999967075884,
+                "kind": "action",
+                "name": "perf_page",
+                "rows": [
+                  " [code-1m.rs]",
+                  "S9_ROW_00001 source_like_fixed_line_00001 return 001;",
+                  "S9_ROW_00002 source_like_fixed_line_00002 return 002;",
+                  "S9_ROW_00003 source_like_fixed_line_00003 return 003;",
+                  "S9_ROW_00004 source_like_fixed_line_00004 return 004;",
+                  "S9_ROW_00005 source_like_fixed_line_00005 return 005;",
+                  "S9_ROW_00006 source_like_fixed_line_00006 return 006;",
+                  "S9_ROW_00007 source_like_fixed_line_00007 return 007;",
+                  "S9_ROW_00008 source_like_fixed_line_00008 return 008;",
+                  "S9_ROW_00009 source_like_fixed_line_00009 return 009;",
+                  "S9_ROW_00010 source_like_fixed_line_00010 return 010;",
+                  "S9_ROW_00010 source_like_fixed_line_00010 return 010;",
+                  "S9_ROW_00011 source_like_fixed_line_00011 return 011;",
+                  "S9_ROW_00012 source_like_fixed_line_00012 return 012;",
+                  "S9_ROW_00013 source_like_fixed_line_00013 return 013;",
+                  "S9_ROW_00014 source_like_fixed_line_00014 return 014;",
+                  "S9_ROW_00015 source_like_fixed_line_00015 return 015;",
+                  "S9_ROW_00016 source_like_fixed_line_00016 return 016;",
+                  "S9_ROW_00017 source_like_fixed_line_00017 return 017;",
+                  "S9_ROW_00018 source_like_fixed_line_00018 return 018;",
+                  "S9_ROW_00019 source_like_fixed_line_00019 return 019;",
+                  "S9_ROW_00020 source_like_fixed_line_00020 return 020;",
+                  "S9_ROW_00021 source_like_fixed_line_00021 return 021;",
+                  "S9_ROW_00022 source_like_fixed_line_00022 return 022;",
+                  "S9_ROW_00023 source_like_fixed_line_00023 return 023;",
+                  "S9_ROW_00024 source_like_fixed_line_00024 return 024;",
+                  "S9_ROW_00025 source_like_fixed_line_00025 return 025;",
+                  "S9_ROW_00026 source_like_fixed_line_00026 return 026;",
+                  "S9_ROW_00027 source_like_fixed_line_00027 return 027;",
+                  "S9_ROW_00028 source_like_fixed_line_00028 return 028;",
+                  "S9_ROW_00029 source_like_fixed_line_00029 return 029;",
+                  "S9_ROW_00030 source_like_fixed_line_00030 return 030;",
+                  "S9_ROW_00031 source_like_fixed_line_00031 return 031;",
+                  "S9_ROW_00032 source_like_fixed_line_00032 return 032;",
+                  "S9_ROW_00033 source_like_fixed_line_00033 return 033;",
+                  "S9_ROW_00034 source_like_fixed_line_00034 return 034;",
+                  "S9_ROW_00035 source_like_fixed_line_00035 return 035;",
+                  "S9_ROW_00036 source_like_fixed_line_00036 return 036;",
+                  "S9_ROW_00037 source_like_fixed_line_00037 return 037;",
+                  "S9_ROW_00038 source_like_fixed_line_00038 return 038;",
+                  "S9_ROW_00039 source_like_fixed_line_00039 return 039;",
+                  "S9_ROW_00040 source_like_fixed_line_00040 return 040;",
+                  "S9_ROW_00041 source_like_fixed_line_00041 return 041;",
+                  "S9_ROW_00042 source_like_fixed_line_00042 return 042;",
+                  "S9_ROW_00043 source_like_fixed_line_00043 return 043;",
+                  "S9_ROW_00044 source_like_fixed_line_00044 return 044;",
+                  "S9_ROW_00045 source_like_fixed_line_00045 return 045;",
+                  "S9_ROW_00046 source_like_fixed_line_00046 return 046;",
+                  "S9_ROW_00047 source_like_fixed_line_00047 return 047;",
+                  " code-1m.rs                                                                                                                                                                    Ln 1, Col 1  Ctrl+Q quit"
+                ],
+                "sha256": "9a02bdf2f7a5b303007ca2c111043af499725899e48258113f52d9acdc82f10d"
+              }
+            ],
+            "exec_failed": false,
+            "exit": 0,
+            "final_drain": true,
+            "identity": {
+              "argv": [
+                "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/perf-profiles/shipped/teddy",
+                "/Users/kriant/w/teddy/bench/corpus/code-1m.rs"
+              ],
+              "observed": "54160 52989 /Users/kriant/w/ /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/perf-profiles/shipped/teddy /Users/kriant/w/teddy/bench/corpus/code-1m.rs",
+              "verified": true
+            },
+            "output_full_bytes": 14147,
+            "output_retained_bytes": 14147,
+            "pgid": 54160,
+            "pgid_after": [],
+            "pgid_after_probe_error": null,
+            "pgid_before": [
+              {
+                "comm": "/Users/kriant/w/",
+                "command": "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/perf-profiles/shipped/teddy /Users/kriant/w/teddy/bench/corpus/code-1m.rs",
+                "pgid": 54160,
+                "pid": 54160,
+                "ppid": 52989
+              },
+              {
+                "comm": "<defunct>",
+                "command": "<defunct>",
+                "pgid": 54160,
+                "pid": 54162,
+                "ppid": 54160
+              }
+            ],
+            "pgid_before_probe_error": null,
+            "pgid_probe_error": null,
+            "pty_eof": true,
+            "pty_output_capped": false,
+            "readiness": {
+              "event_index": 1,
+              "matched": true,
+              "matched_at": 0.005581624980550259,
+              "name": "readiness",
+              "snapshot": [
+                " [code-1m.rs]",
+                "S9_ROW_00000 source_like_fixed_line_00000 return 000;",
+                "S9_ROW_00001 source_like_fixed_line_00001 return 001;",
+                "S9_ROW_00002 source_like_fixed_line_00002 return 002;",
+                "S9_ROW_00003 source_like_fixed_line_00003 return 003;",
+                "S9_ROW_00004 source_like_fixed_line_00004 return 004;",
+                "S9_ROW_00005 source_like_fixed_line_00005 return 005;",
+                "S9_ROW_00006 source_like_fixed_line_00006 return 006;",
+                "S9_ROW_00007 source_like_fixed_line_00007 return 007;",
+                "S9_ROW_00008 source_like_fixed_line_00008 return 008;",
+                "S9_ROW_00009 source_like_fixed_line_00009 return 009;",
+                "S9_ROW_00010 source_like_fixed_line_00010 return 010;",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                ""
+              ]
+            },
+            "reaped": true,
+            "screen": [
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              ""
+            ],
+            "signal": null,
+            "spawn": 0.0,
+            "stderr": "",
+            "stderr_capped": false,
+            "stderr_eof": true,
+            "stderr_full_bytes": 0,
+            "stderr_retained_bytes": 0,
+            "timed_out": false,
+            "trace_bytes": 14147,
+            "trace_discarded_bytes": 0,
+            "trace_retained_bytes": 14147,
+            "trace_sha256": "286b64c38f06466c0deba314ea3cbd5eec8a1b90f8819ebccaa7b4db25f4b670",
+            "unsupported": []
+          },
+          "profile": "shipped",
+          "ready": true
+        }
+      ],
+      "quantiles_us": {
+        "count": 2,
+        "p50": 2107.0,
+        "p95": 2145.7
+      },
+      "reason": "runtime perf PTY attempt; action association is required for PASS",
+      "status": "INCONCLUSIVE"
+    },
+    "C3": {
+      "attempts": [
+        {
+          "actions": [
+            {
+              "bytes": "06",
+              "endpoint": 0.01957587501965463,
+              "endpoint_event_index": 4,
+              "endpoint_found": true,
+              "first_output_after_write": 0.01957587501965463,
+              "last_output": 0.01957587501965463,
+              "name": "search_prompt",
+              "output_event_count": 1,
+              "output_event_sequence_at_write": 4,
+              "quiet_complete": 0.026922499993816018,
+              "quiet_gap": 0.0073466249741613865,
+              "write": 0.019506292010191828
+            },
+            {
+              "bytes": "53395f43315f5441494c",
+              "endpoint": 0.03274824999971315,
+              "endpoint_event_index": 5,
+              "endpoint_found": true,
+              "first_output_after_write": 0.03274824999971315,
+              "last_output": 0.03274824999971315,
+              "name": "literal_find",
+              "output_event_count": 1,
+              "output_event_sequence_at_write": 5,
+              "quiet_complete": 0.040418458986096084,
+              "quiet_gap": 0.0076702089863829315,
+              "write": 0.03267833398422226
+            },
+            {
+              "bytes": "0d",
+              "endpoint": 0.04920325003331527,
+              "endpoint_event_index": 6,
+              "endpoint_found": true,
+              "first_output_after_write": 0.04920325003331527,
+              "last_output": 0.6739320420310833,
+              "name": "search_submit",
+              "output_event_count": 513,
+              "output_event_sequence_at_write": 6,
+              "quiet_complete": 0.6817301670089364,
+              "quiet_gap": 0.007798124977853149,
+              "write": 0.04759120900416747
+            },
+            {
+              "bytes": "1b",
+              "endpoint": null,
+              "endpoint_event_index": null,
+              "endpoint_found": false,
+              "first_output_after_write": 0.7014293749816716,
+              "last_output": 0.7014293749816716,
+              "name": "search_cancel",
+              "output_event_count": 1,
+              "output_event_sequence_at_write": 519,
+              "quiet_complete": 4.714706292026676,
+              "quiet_gap": 4.013276917045005,
+              "write": 0.6893169590039179
+            }
+          ],
+          "cancel_observed": false,
+          "clean": true,
+          "keys": {
+            "cancel": "Escape",
+            "start_search": "Ctrl-F",
+            "submit": "Enter"
+          },
+          "needle": "S9_C1_TAIL",
+          "process": {
+            "actions": [
+              {
+                "bytes": "06",
+                "endpoint": 0.01957587501965463,
+                "endpoint_event_index": 4,
+                "endpoint_found": true,
+                "first_output_after_write": 0.01957587501965463,
+                "last_output": 0.01957587501965463,
+                "name": "search_prompt",
+                "output_event_count": 1,
+                "output_event_sequence_at_write": 4,
+                "quiet_complete": 0.026922499993816018,
+                "quiet_gap": 0.0073466249741613865,
+                "write": 0.019506292010191828
+              },
+              {
+                "bytes": "53395f43315f5441494c",
+                "endpoint": 0.03274824999971315,
+                "endpoint_event_index": 5,
+                "endpoint_found": true,
+                "first_output_after_write": 0.03274824999971315,
+                "last_output": 0.03274824999971315,
+                "name": "literal_find",
+                "output_event_count": 1,
+                "output_event_sequence_at_write": 5,
+                "quiet_complete": 0.040418458986096084,
+                "quiet_gap": 0.0076702089863829315,
+                "write": 0.03267833398422226
+              },
+              {
+                "bytes": "0d",
+                "endpoint": 0.04920325003331527,
+                "endpoint_event_index": 6,
+                "endpoint_found": true,
+                "first_output_after_write": 0.04920325003331527,
+                "last_output": 0.6739320420310833,
+                "name": "search_submit",
+                "output_event_count": 513,
+                "output_event_sequence_at_write": 6,
+                "quiet_complete": 0.6817301670089364,
+                "quiet_gap": 0.007798124977853149,
+                "write": 0.04759120900416747
+              },
+              {
+                "bytes": "1b",
+                "endpoint": null,
+                "endpoint_event_index": null,
+                "endpoint_found": false,
+                "first_output_after_write": 0.7014293749816716,
+                "last_output": 0.7014293749816716,
+                "name": "search_cancel",
+                "output_event_count": 1,
+                "output_event_sequence_at_write": 519,
+                "quiet_complete": 4.714706292026676,
+                "quiet_gap": 4.013276917045005,
+                "write": 0.6893169590039179
+              }
+            ],
+            "cleanup_error": null,
+            "descendants": [],
+            "descendants_left": false,
+            "drain_complete": true,
+            "drain_deadline": false,
+            "drain_reason": "both channels reached EOF/EIO",
+            "endpoint_snapshots": [
+              {
+                "at": 0.01957587501965463,
+                "kind": "action",
+                "name": "search_prompt",
+                "rows": [
+                  " [s9-1g.log]",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  " Find:                                                                                                                                                            byte 0 / 1073741824 (0%)  Ctrl+Q quit"
+                ],
+                "sha256": "736987564393797fd7fb7d3747343d2a932633b965fc6ce97d840054c95d28bc"
+              },
+              {
+                "at": 0.03274824999971315,
+                "kind": "action",
+                "name": "literal_find",
+                "rows": [
+                  " [s9-1g.log]",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  " Find: S9_C1_TAIL                                                                                                                                                 byte 0 / 1073741824 (0%)  Ctrl+Q quit"
+                ],
+                "sha256": "9359e2ebf44b0c8032a7597bf0c2b96a219b4fe0e529e0075c2f499490cd8b9a"
+              },
+              {
+                "at": 0.04920325003331527,
+                "kind": "action",
+                "name": "search_submit",
+                "rows": [
+                  " [s9-1g.log]",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  " s9-1g.log  HUGE  NOIDX  searching\u2026 0%                                                                                                                          byte 0 / 1073741824 (0%)  Ctrl+Q quit t"
+                ],
+                "sha256": "a9213982325ade643f796e375463319e037992ef5ff1d2832109d9b5ab7f9a4f"
+              },
+              {
+                "at": null,
+                "kind": "action",
+                "name": "search_cancel",
+                "rows": [
+                  " [s9-1g.log]",
+                  "S9_C1_TAIL",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  " s9-1g.log  HUGE  NOIDX                                                                                                                                 byte 1073741770 / 1073741824 (99%)  Ctrl+Q quit"
+                ],
+                "sha256": "60395832c41db95d5a493f4a4bb0e52b0a391be2674137db16ff8e0c3d1831c6"
+              }
+            ],
+            "exec_failed": false,
+            "exit": 0,
+            "final_drain": true,
+            "identity": {
+              "argv": [
+                "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy",
+                "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log"
+              ],
+              "observed": "54195 52989 /Users/kriant/w/ /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+              "verified": true
+            },
+            "output_full_bytes": 36085,
+            "output_retained_bytes": 36085,
+            "pgid": 54195,
+            "pgid_after": [],
+            "pgid_after_probe_error": null,
+            "pgid_before": [
+              {
+                "comm": "/Users/kriant/w/",
+                "command": "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                "pgid": 54195,
+                "pid": 54195,
+                "ppid": 52989
+              }
+            ],
+            "pgid_before_probe_error": null,
+            "pgid_probe_error": null,
+            "pty_eof": true,
+            "pty_output_capped": false,
+            "readiness": {
+              "event_index": 0,
+              "matched": true,
+              "matched_at": 0.004564000002574176,
+              "name": "readiness",
+              "snapshot": [
+                " [s9-1g.log]",
+                "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                "S9_C1_ROW_000000 source_like_phase2_fixe",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                ""
+              ]
+            },
+            "reaped": true,
+            "screen": [
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              ""
+            ],
+            "signal": null,
+            "spawn": 0.0,
+            "stderr": "",
+            "stderr_capped": false,
+            "stderr_eof": true,
+            "stderr_full_bytes": 0,
+            "stderr_retained_bytes": 0,
+            "timed_out": true,
+            "trace_bytes": 36085,
+            "trace_discarded_bytes": 0,
+            "trace_retained_bytes": 36085,
+            "trace_sha256": "88e3f10d0563e549bbe2c7edb529370c9aa48e82a352a979c99add8f7f2b0d03",
+            "unsupported": []
+          },
+          "profile": "bare",
+          "prompt_observed": true,
+          "ready": true,
+          "search_observed": true,
+          "semantic_association": false
+        },
+        {
+          "actions": [
+            {
+              "bytes": "06",
+              "endpoint": 0.021484749973751605,
+              "endpoint_event_index": 4,
+              "endpoint_found": true,
+              "first_output_after_write": 0.021484749973751605,
+              "last_output": 0.021484749973751605,
+              "name": "search_prompt",
+              "output_event_count": 1,
+              "output_event_sequence_at_write": 4,
+              "quiet_complete": 0.029260165989398956,
+              "quiet_gap": 0.007775416015647352,
+              "write": 0.021420540986582637
+            },
+            {
+              "bytes": "53395f43315f5441494c",
+              "endpoint": 0.03687074995832518,
+              "endpoint_event_index": 5,
+              "endpoint_found": true,
+              "first_output_after_write": 0.03687074995832518,
+              "last_output": 0.03687074995832518,
+              "name": "literal_find",
+              "output_event_count": 1,
+              "output_event_sequence_at_write": 5,
+              "quiet_complete": 0.044651374977547675,
+              "quiet_gap": 0.007780625019222498,
+              "write": 0.03680850000819191
+            },
+            {
+              "bytes": "0d",
+              "endpoint": 0.05404699995415285,
+              "endpoint_event_index": 6,
+              "endpoint_found": true,
+              "first_output_after_write": 0.05404699995415285,
+              "last_output": 0.6866988749825396,
+              "name": "search_submit",
+              "output_event_count": 513,
+              "output_event_sequence_at_write": 6,
+              "quiet_complete": 0.6944862499949522,
+              "quiet_gap": 0.007787375012412667,
+              "write": 0.052272040979005396
+            },
+            {
+              "bytes": "1b",
+              "endpoint": null,
+              "endpoint_event_index": null,
+              "endpoint_found": false,
+              "first_output_after_write": 0.7116707499953918,
+              "last_output": 0.7116707499953918,
+              "name": "search_cancel",
+              "output_event_count": 1,
+              "output_event_sequence_at_write": 519,
+              "quiet_complete": 4.717497707984876,
+              "quiet_gap": 4.005826957989484,
+              "write": 0.6996124580036849
+            }
+          ],
+          "cancel_observed": false,
+          "clean": true,
+          "keys": {
+            "cancel": "Escape",
+            "start_search": "Ctrl-F",
+            "submit": "Enter"
+          },
+          "needle": "S9_C1_TAIL",
+          "process": {
+            "actions": [
+              {
+                "bytes": "06",
+                "endpoint": 0.021484749973751605,
+                "endpoint_event_index": 4,
+                "endpoint_found": true,
+                "first_output_after_write": 0.021484749973751605,
+                "last_output": 0.021484749973751605,
+                "name": "search_prompt",
+                "output_event_count": 1,
+                "output_event_sequence_at_write": 4,
+                "quiet_complete": 0.029260165989398956,
+                "quiet_gap": 0.007775416015647352,
+                "write": 0.021420540986582637
+              },
+              {
+                "bytes": "53395f43315f5441494c",
+                "endpoint": 0.03687074995832518,
+                "endpoint_event_index": 5,
+                "endpoint_found": true,
+                "first_output_after_write": 0.03687074995832518,
+                "last_output": 0.03687074995832518,
+                "name": "literal_find",
+                "output_event_count": 1,
+                "output_event_sequence_at_write": 5,
+                "quiet_complete": 0.044651374977547675,
+                "quiet_gap": 0.007780625019222498,
+                "write": 0.03680850000819191
+              },
+              {
+                "bytes": "0d",
+                "endpoint": 0.05404699995415285,
+                "endpoint_event_index": 6,
+                "endpoint_found": true,
+                "first_output_after_write": 0.05404699995415285,
+                "last_output": 0.6866988749825396,
+                "name": "search_submit",
+                "output_event_count": 513,
+                "output_event_sequence_at_write": 6,
+                "quiet_complete": 0.6944862499949522,
+                "quiet_gap": 0.007787375012412667,
+                "write": 0.052272040979005396
+              },
+              {
+                "bytes": "1b",
+                "endpoint": null,
+                "endpoint_event_index": null,
+                "endpoint_found": false,
+                "first_output_after_write": 0.7116707499953918,
+                "last_output": 0.7116707499953918,
+                "name": "search_cancel",
+                "output_event_count": 1,
+                "output_event_sequence_at_write": 519,
+                "quiet_complete": 4.717497707984876,
+                "quiet_gap": 4.005826957989484,
+                "write": 0.6996124580036849
+              }
+            ],
+            "cleanup_error": null,
+            "descendants": [],
+            "descendants_left": false,
+            "drain_complete": true,
+            "drain_deadline": false,
+            "drain_reason": "both channels reached EOF/EIO",
+            "endpoint_snapshots": [
+              {
+                "at": 0.021484749973751605,
+                "kind": "action",
+                "name": "search_prompt",
+                "rows": [
+                  " [s9-1g.log]",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  " Find:                                                                                                                                                            byte 0 / 1073741824 (0%)  Ctrl+Q quit"
+                ],
+                "sha256": "736987564393797fd7fb7d3747343d2a932633b965fc6ce97d840054c95d28bc"
+              },
+              {
+                "at": 0.03687074995832518,
+                "kind": "action",
+                "name": "literal_find",
+                "rows": [
+                  " [s9-1g.log]",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  " Find: S9_C1_TAIL                                                                                                                                                 byte 0 / 1073741824 (0%)  Ctrl+Q quit"
+                ],
+                "sha256": "9359e2ebf44b0c8032a7597bf0c2b96a219b4fe0e529e0075c2f499490cd8b9a"
+              },
+              {
+                "at": 0.05404699995415285,
+                "kind": "action",
+                "name": "search_submit",
+                "rows": [
+                  " [s9-1g.log]",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                  " s9-1g.log  HUGE  NOIDX  searching\u2026 0%                                                                                                                          byte 0 / 1073741824 (0%)  Ctrl+Q quit t"
+                ],
+                "sha256": "a9213982325ade643f796e375463319e037992ef5ff1d2832109d9b5ab7f9a4f"
+              },
+              {
+                "at": null,
+                "kind": "action",
+                "name": "search_cancel",
+                "rows": [
+                  " [s9-1g.log]",
+                  "S9_C1_TAIL",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  " s9-1g.log  HUGE  NOIDX                                                                                                                                 byte 1073741770 / 1073741824 (99%)  Ctrl+Q quit"
+                ],
+                "sha256": "60395832c41db95d5a493f4a4bb0e52b0a391be2674137db16ff8e0c3d1831c6"
+              }
+            ],
+            "exec_failed": false,
+            "exit": 0,
+            "final_drain": true,
+            "identity": {
+              "argv": [
+                "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy",
+                "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log"
+              ],
+              "observed": "54252 52989 /Users/kriant/w/ /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+              "verified": true
+            },
+            "output_full_bytes": 36103,
+            "output_retained_bytes": 36103,
+            "pgid": 54252,
+            "pgid_after": [],
+            "pgid_after_probe_error": null,
+            "pgid_before": [
+              {
+                "comm": "/Users/kriant/w/",
+                "command": "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                "pgid": 54252,
+                "pid": 54252,
+                "ppid": 52989
+              },
+              {
+                "comm": "<defunct>",
+                "command": "<defunct>",
+                "pgid": 54252,
+                "pid": 54254,
+                "ppid": 54252
+              }
+            ],
+            "pgid_before_probe_error": null,
+            "pgid_probe_error": null,
+            "pty_eof": true,
+            "pty_output_capped": false,
+            "readiness": {
+              "event_index": 0,
+              "matched": true,
+              "matched_at": 0.004298540996387601,
+              "name": "readiness",
+              "snapshot": [
+                " [s9-1g.log]",
+                "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                "S9_C1_ROW_000000 source_like_phase2_fixed_line_00000000000000000",
+                "S9_C1_ROW_000000 source_like_phase2_fixe",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                ""
+              ]
+            },
+            "reaped": true,
+            "screen": [
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              ""
+            ],
+            "signal": null,
+            "spawn": 0.0,
+            "stderr": "",
+            "stderr_capped": false,
+            "stderr_eof": true,
+            "stderr_full_bytes": 0,
+            "stderr_retained_bytes": 0,
+            "timed_out": true,
+            "trace_bytes": 36103,
+            "trace_discarded_bytes": 0,
+            "trace_retained_bytes": 36103,
+            "trace_sha256": "051a0055477ce265d8cd25de0a161bb40325ba93beb9af3e96ec6cbda670b151",
+            "unsupported": []
+          },
+          "profile": "shipped",
+          "prompt_observed": true,
+          "ready": true,
+          "search_observed": true,
+          "semantic_association": false
+        }
+      ],
+      "evidence": [
+        {
+          "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c3-bare-attempt.json",
+          "sha256": "6d5df7b3f48de9bb0a4e770128855f874e8bdda40134291f1bfd722e9f5881b6",
+          "size": 21718
+        },
+        {
+          "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c3-shipped-attempt.json",
+          "sha256": "bab76f122e0f9faaa43d8f0e6f19dec545b1bd94fdeaf39728e88e4c0906425f",
+          "size": 21880
+        }
+      ],
+      "reason": "real literal-search/cancellation PTY attempts retained; UI action association is not established",
+      "status": "INCONCLUSIVE"
+    },
+    "C4": {
+      "fixtures": [
+        {
+          "actual_saved_sha256": "2eb12dde0c8b15b4464b1039c8b3a1973037039ef19add283f642fd10a9e3dfe",
+          "expected": "2eb12dde0c8b15b4464b1039c8b3a1973037039ef19add283f642fd10a9e3dfe",
+          "fixture": "edit-crlf.txt",
+          "profile": "bare",
+          "saved_output": {
+            "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c4/bare-insert-save-crlf-saved.bin",
+            "sha256": "2eb12dde0c8b15b4464b1039c8b3a1973037039ef19add283f642fd10a9e3dfe",
+            "size": 45
+          },
+          "source_unchanged": true,
+          "status": "PASS"
+        },
+        {
+          "actual_saved_sha256": "90c3d7d5913e2357c8157f7b99b8ebb0af4b40ca17de18bf8e6862fbb1778d87",
+          "expected": "90c3d7d5913e2357c8157f7b99b8ebb0af4b40ca17de18bf8e6862fbb1778d87",
+          "fixture": "edit-invalid.txt",
+          "profile": "bare",
+          "saved_output": {
+            "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c4/bare-insert-save-invalid-saved.bin",
+            "sha256": "90c3d7d5913e2357c8157f7b99b8ebb0af4b40ca17de18bf8e6862fbb1778d87",
+            "size": 29
+          },
+          "source_unchanged": true,
+          "status": "PASS"
+        },
+        {
+          "actual_saved_sha256": "2eb12dde0c8b15b4464b1039c8b3a1973037039ef19add283f642fd10a9e3dfe",
+          "expected": "2eb12dde0c8b15b4464b1039c8b3a1973037039ef19add283f642fd10a9e3dfe",
+          "fixture": "edit-crlf.txt",
+          "profile": "shipped",
+          "saved_output": {
+            "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c4/shipped-insert-save-crlf-saved.bin",
+            "sha256": "2eb12dde0c8b15b4464b1039c8b3a1973037039ef19add283f642fd10a9e3dfe",
+            "size": 45
+          },
+          "source_unchanged": true,
+          "status": "PASS"
+        },
+        {
+          "actual_saved_sha256": "90c3d7d5913e2357c8157f7b99b8ebb0af4b40ca17de18bf8e6862fbb1778d87",
+          "expected": "90c3d7d5913e2357c8157f7b99b8ebb0af4b40ca17de18bf8e6862fbb1778d87",
+          "fixture": "edit-invalid.txt",
+          "profile": "shipped",
+          "saved_output": {
+            "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c4/shipped-insert-save-invalid-saved.bin",
+            "sha256": "90c3d7d5913e2357c8157f7b99b8ebb0af4b40ca17de18bf8e6862fbb1778d87",
+            "size": 29
+          },
+          "source_unchanged": true,
+          "status": "PASS"
+        }
+      ],
+      "reason": "isolated teddy integration and declared fixture digest verification",
+      "status": "PASS"
+    },
+    "C5": {
+      "evidence": {
+        "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c5-rss.json",
+        "sha256": "d6396df22a3bebf2222855a347da963e676efcd0870bad7c4e66fe9bbd8b149e",
+        "size": 8981
+      },
+      "reason": "RSS samples are diagnostic only; no performance budget",
+      "samples": [
+        {
+          "peak_bytes": 1884160,
+          "profile": "bare",
+          "rep": 1,
+          "samples": [
+            {
+              "at": 276392.607124041,
+              "members": [
+                {
+                  "pid": 53590,
+                  "raw": "1840 53590 53590 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                  "rss_bytes": 1884160
+                }
+              ],
+              "pgid": 53590,
+              "rss_bytes": 1884160
+            },
+            {
+              "at": 276392.648018833,
+              "members": [
+                {
+                  "pid": 53590,
+                  "raw": "1840 53590 53590 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                  "rss_bytes": 1884160
+                }
+              ],
+              "pgid": 53590,
+              "rss_bytes": 1884160
+            }
+          ]
+        },
+        {
+          "peak_bytes": 1867776,
+          "profile": "bare",
+          "rep": 2,
+          "samples": [
+            {
+              "at": 276392.792563916,
+              "members": [
+                {
+                  "pid": 53598,
+                  "raw": "1824 53598 53598 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                  "rss_bytes": 1867776
+                }
+              ],
+              "pgid": 53598,
+              "rss_bytes": 1867776
+            },
+            {
+              "at": 276392.832948041,
+              "members": [
+                {
+                  "pid": 53598,
+                  "raw": "1824 53598 53598 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                  "rss_bytes": 1867776
+                }
+              ],
+              "pgid": 53598,
+              "rss_bytes": 1867776
+            }
+          ]
+        },
+        {
+          "peak_bytes": 1867776,
+          "profile": "bare",
+          "rep": 3,
+          "samples": [
+            {
+              "at": 276392.965530333,
+              "members": [
+                {
+                  "pid": 53606,
+                  "raw": "1824 53606 53606 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                  "rss_bytes": 1867776
+                }
+              ],
+              "pgid": 53606,
+              "rss_bytes": 1867776
+            },
+            {
+              "at": 276393.006519625,
+              "members": [
+                {
+                  "pid": 53606,
+                  "raw": "1824 53606 53606 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                  "rss_bytes": 1867776
+                }
+              ],
+              "pgid": 53606,
+              "rss_bytes": 1867776
+            }
+          ]
+        },
+        {
+          "peak_bytes": 1884160,
+          "profile": "bare",
+          "rep": 4,
+          "samples": [
+            {
+              "at": 276393.1392245,
+              "members": [
+                {
+                  "pid": 53614,
+                  "raw": "1840 53614 53614 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                  "rss_bytes": 1884160
+                }
+              ],
+              "pgid": 53614,
+              "rss_bytes": 1884160
+            },
+            {
+              "at": 276393.180698208,
+              "members": [
+                {
+                  "pid": 53614,
+                  "raw": "1840 53614 53614 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                  "rss_bytes": 1884160
+                }
+              ],
+              "pgid": 53614,
+              "rss_bytes": 1884160
+            }
+          ]
+        },
+        {
+          "peak_bytes": 1884160,
+          "profile": "bare",
+          "rep": 5,
+          "samples": [
+            {
+              "at": 276393.314339333,
+              "members": [
+                {
+                  "pid": 53630,
+                  "raw": "1840 53630 53630 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                  "rss_bytes": 1884160
+                }
+              ],
+              "pgid": 53630,
+              "rss_bytes": 1884160
+            },
+            {
+              "at": 276393.35493025,
+              "members": [
+                {
+                  "pid": 53630,
+                  "raw": "1840 53630 53630 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                  "rss_bytes": 1884160
+                }
+              ],
+              "pgid": 53630,
+              "rss_bytes": 1884160
+            }
+          ]
+        },
+        {
+          "peak_bytes": 3358720,
+          "profile": "shipped",
+          "rep": 1,
+          "samples": [
+            {
+              "at": 276393.526508625,
+              "members": [
+                {
+                  "pid": 53638,
+                  "raw": "1840 53638 53638 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                  "rss_bytes": 1884160
+                },
+                {
+                  "pid": 53640,
+                  "raw": "1440 53640 53638 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy-highlight",
+                  "rss_bytes": 1474560
+                }
+              ],
+              "pgid": 53638,
+              "rss_bytes": 3358720
+            },
+            {
+              "at": 276393.591407583,
+              "members": [
+                {
+                  "pid": 53638,
+                  "raw": "1840 53638 53638 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                  "rss_bytes": 1884160
+                },
+                {
+                  "pid": 53640,
+                  "raw": "1440 53640 53638 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy-highlight",
+                  "rss_bytes": 1474560
+                }
+              ],
+              "pgid": 53638,
+              "rss_bytes": 3358720
+            }
+          ]
+        },
+        {
+          "peak_bytes": 3358720,
+          "profile": "shipped",
+          "rep": 2,
+          "samples": [
+            {
+              "at": 276393.727563583,
+              "members": [
+                {
+                  "pid": 53649,
+                  "raw": "1840 53649 53649 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                  "rss_bytes": 1884160
+                },
+                {
+                  "pid": 53651,
+                  "raw": "1440 53651 53649 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy-highlight",
+                  "rss_bytes": 1474560
+                }
+              ],
+              "pgid": 53649,
+              "rss_bytes": 3358720
+            },
+            {
+              "at": 276393.774031,
+              "members": [
+                {
+                  "pid": 53649,
+                  "raw": "1840 53649 53649 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                  "rss_bytes": 1884160
+                },
+                {
+                  "pid": 53651,
+                  "raw": "1440 53651 53649 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy-highlight",
+                  "rss_bytes": 1474560
+                }
+              ],
+              "pgid": 53649,
+              "rss_bytes": 3358720
+            }
+          ]
+        },
+        {
+          "peak_bytes": 3358720,
+          "profile": "shipped",
+          "rep": 3,
+          "samples": [
+            {
+              "at": 276393.91010925,
+              "members": [
+                {
+                  "pid": 53660,
+                  "raw": "1840 53660 53660 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                  "rss_bytes": 1884160
+                },
+                {
+                  "pid": 53662,
+                  "raw": "1440 53662 53660 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy-highlight",
+                  "rss_bytes": 1474560
+                }
+              ],
+              "pgid": 53660,
+              "rss_bytes": 3358720
+            },
+            {
+              "at": 276393.955084375,
+              "members": [
+                {
+                  "pid": 53660,
+                  "raw": "1840 53660 53660 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                  "rss_bytes": 1884160
+                },
+                {
+                  "pid": 53662,
+                  "raw": "1440 53662 53660 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy-highlight",
+                  "rss_bytes": 1474560
+                }
+              ],
+              "pgid": 53660,
+              "rss_bytes": 3358720
+            }
+          ]
+        },
+        {
+          "peak_bytes": 3358720,
+          "profile": "shipped",
+          "rep": 4,
+          "samples": [
+            {
+              "at": 276394.089858833,
+              "members": [
+                {
+                  "pid": 53673,
+                  "raw": "1840 53673 53673 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                  "rss_bytes": 1884160
+                },
+                {
+                  "pid": 53675,
+                  "raw": "1440 53675 53673 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy-highlight",
+                  "rss_bytes": 1474560
+                }
+              ],
+              "pgid": 53673,
+              "rss_bytes": 3358720
+            },
+            {
+              "at": 276394.14104475,
+              "members": [
+                {
+                  "pid": 53673,
+                  "raw": "1840 53673 53673 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                  "rss_bytes": 1884160
+                },
+                {
+                  "pid": 53675,
+                  "raw": "1440 53675 53673 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy-highlight",
+                  "rss_bytes": 1474560
+                }
+              ],
+              "pgid": 53673,
+              "rss_bytes": 3358720
+            }
+          ]
+        },
+        {
+          "peak_bytes": 3358720,
+          "profile": "shipped",
+          "rep": 5,
+          "samples": [
+            {
+              "at": 276394.27633225,
+              "members": [
+                {
+                  "pid": 53692,
+                  "raw": "1840 53692 53692 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                  "rss_bytes": 1884160
+                },
+                {
+                  "pid": 53694,
+                  "raw": "1440 53694 53692 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy-highlight",
+                  "rss_bytes": 1474560
+                }
+              ],
+              "pgid": 53692,
+              "rss_bytes": 3358720
+            },
+            {
+              "at": 276394.320003208,
+              "members": [
+                {
+                  "pid": 53692,
+                  "raw": "1840 53692 53692 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+                  "rss_bytes": 1884160
+                },
+                {
+                  "pid": 53694,
+                  "raw": "1440 53694 53692 /Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy-highlight",
+                  "rss_bytes": 1474560
+                }
+              ],
+              "pgid": 53692,
+              "rss_bytes": 3358720
+            }
+          ]
+        }
+      ],
+      "status": "NOT_MEASURED"
+    }
+  },
+  "command": "python3 bench/bench.py full --allow-large",
+  "comparators": {
+    "status": "DISCOVERED",
+    "tools": [
+      {
+        "name": "nvim",
+        "path": "/opt/homebrew/Cellar/neovim/0.12.2/bin/nvim",
+        "sha256": "d3c3ac14d241e471cee015d093ad8f7fa41d1bcda69ca142c3b3e63a7d71b07d",
+        "size": 4278576,
+        "status": "IDENTITY_RECORDED",
+        "version": {
+          "exit": 0,
+          "stderr": "",
+          "stdout": "NVIM v0.12.2\nBuild type: Release\nLuaJIT 2.1.1780076327\nRun \"nvim -V1 -v\" for more info\n"
+        }
+      },
+      {
+        "name": "vim",
+        "path": "/usr/bin/vim",
+        "sha256": "0e7f7d3ff46a0ab745a3d2a987505524fa40735f36ebb7495a1764892a59df1f",
+        "size": 5651232,
+        "status": "IDENTITY_RECORDED",
+        "version": {
+          "exit": 0,
+          "stderr": "",
+          "stdout": "VIM - Vi IMproved 9.1 (2024 Jan 02, compiled Apr 18 2026 20:29:32)\nmacOS version - arm64\nIncluded patches: 1-1752\nCompiled by root@apple.com\nNormal version without GUI.  Features included (+) or not (-):\n+acl               +find_in_path      +multi_byte        -tcl\n-arabic            +float             +multi_lang        +termguicolors\n+autocmd           +folding           -mzscheme          +terminal\n+autochdir         -footer            +netbeans_intg     +terminfo\n-autoservername    +fork()            +num64             +termresponse\n-balloon_eval      -gettext           +packages          +textobjects\n-balloon_eval_term -hangul_input      +path_extra        +textprop\n-browse            +iconv             -perl              +timers\n++builtin_terms    +insert_expand     +persistent_undo   +title\n+byte_offset       +ipv6              +popupwin          -toolbar\n+channel           +job               +postscript        +user_commands\n+cindent           +jumplist          +printer           -vartabs\n-clientserver      -keymap            -profile           +vertsplit\n+clipboard         +lambda            -python            +vim9script\n+cmdline_compl     -langmap           -python3           +viminfo\n+cmdline_hist      +libcall           +quickfix          +virtualedit\n+cmdline_info      +linebreak         +reltime           +visual\n+comments          +lispindent        -rightleft         +visualextra\n+conceal           +listcmds          -ruby              +vreplace\n+cryptv            +localmap          +scrollbind        -wayland\n+cscope            -lua               +signs             -wayland_clipboard\n+cursorbind        +menu              +smartindent       +wildignore\n+cursorshape       +mksession         -socketserver      +wildmenu\n+dialog_con        +modify_fname      -sodium            +windows\n+diff              +mouse             -sound             +writebackup\n+digraphs          -mouseshape        +spell             -X11\n-dnd               +mouse_dec         +startuptime       -xattr\n-ebcdic            -mouse_gpm         +statusline        -xfontset\n-emacs_tags        -mouse_jsbterm     -sun_workshop      -xim\n+eval              +mouse_netterm     +syntax            -xpm\n+ex_extra          +mouse_sgr         -tabpanel          -xsmp\n+extra_search      -mouse_sysmouse    +tag_binary        -xterm_clipboard\n-farsi             +mouse_urxvt       -tag_old_static    -xterm_save\n+file_in_path      +mouse_xterm       -tag_any_white     \n   system vimrc file: \"$VIM/vimrc\"\n     user vimrc file: \"$HOME/.vimrc\"\n 2nd user vimrc file: \"~/.vim/vimrc\"\n 3rd user vimrc file: \"~/.config/vim/vimrc\"\n      user exrc file: \"$HOME/.exrc\"\n       defaults file: \"$VIMRUNTIME/defaults.vim\"\n  fall-back for $VIM: \"/usr/share/vim\"\nCompilation: gcc -c -I. -Iproto -DHAVE_CONFIG_H   -DMACOS_X_UNIX  -g -O2 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=1      \nLinking: gcc   -L/usr/local/lib -o vim        -lm -lncurses  -liconv -framework Cocoa           \n"
+        }
+      },
+      {
+        "name": "vi",
+        "path": "/usr/bin/vim",
+        "sha256": "0e7f7d3ff46a0ab745a3d2a987505524fa40735f36ebb7495a1764892a59df1f",
+        "size": 5651232,
+        "status": "IDENTITY_RECORDED",
+        "version": {
+          "exit": 0,
+          "stderr": "",
+          "stdout": "VIM - Vi IMproved 9.1 (2024 Jan 02, compiled Apr 18 2026 20:29:32)\nmacOS version - arm64\nIncluded patches: 1-1752\nCompiled by root@apple.com\nNormal version without GUI.  Features included (+) or not (-):\n+acl               +find_in_path      +multi_byte        -tcl\n-arabic            +float             +multi_lang        +termguicolors\n+autocmd           +folding           -mzscheme          +terminal\n+autochdir         -footer            +netbeans_intg     +terminfo\n-autoservername    +fork()            +num64             +termresponse\n-balloon_eval      -gettext           +packages          +textobjects\n-balloon_eval_term -hangul_input      +path_extra        +textprop\n-browse            +iconv             -perl              +timers\n++builtin_terms    +insert_expand     +persistent_undo   +title\n+byte_offset       +ipv6              +popupwin          -toolbar\n+channel           +job               +postscript        +user_commands\n+cindent           +jumplist          +printer           -vartabs\n-clientserver      -keymap            -profile           +vertsplit\n+clipboard         +lambda            -python            +vim9script\n+cmdline_compl     -langmap           -python3           +viminfo\n+cmdline_hist      +libcall           +quickfix          +virtualedit\n+cmdline_info      +linebreak         +reltime           +visual\n+comments          +lispindent        -rightleft         +visualextra\n+conceal           +listcmds          -ruby              +vreplace\n+cryptv            +localmap          +scrollbind        -wayland\n+cscope            -lua               +signs             -wayland_clipboard\n+cursorbind        +menu              +smartindent       +wildignore\n+cursorshape       +mksession         -socketserver      +wildmenu\n+dialog_con        +modify_fname      -sodium            +windows\n+diff              +mouse             -sound             +writebackup\n+digraphs          -mouseshape        +spell             -X11\n-dnd               +mouse_dec         +startuptime       -xattr\n-ebcdic            -mouse_gpm         +statusline        -xfontset\n-emacs_tags        -mouse_jsbterm     -sun_workshop      -xim\n+eval              +mouse_netterm     +syntax            -xpm\n+ex_extra          +mouse_sgr         -tabpanel          -xsmp\n+extra_search      -mouse_sysmouse    +tag_binary        -xterm_clipboard\n-farsi             +mouse_urxvt       -tag_old_static    -xterm_save\n+file_in_path      +mouse_xterm       -tag_any_white     \n   system vimrc file: \"$VIM/vimrc\"\n     user vimrc file: \"$HOME/.vimrc\"\n 2nd user vimrc file: \"~/.vim/vimrc\"\n 3rd user vimrc file: \"~/.config/vim/vimrc\"\n      user exrc file: \"$HOME/.exrc\"\n       defaults file: \"$VIMRUNTIME/defaults.vim\"\n  fall-back for $VIM: \"/usr/share/vim\"\nCompilation: gcc -c -I. -Iproto -DHAVE_CONFIG_H   -DMACOS_X_UNIX  -g -O2 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=1      \nLinking: gcc   -L/usr/local/lib -o vim        -lm -lncurses  -liconv -framework Cocoa           \n"
+        }
+      },
+      {
+        "name": "less",
+        "path": "/opt/homebrew/Cellar/less/704/bin/less",
+        "sha256": "8ad5a03aefdc264fb6b0bf5615a6dad02ac8de5a61c83a2e13e9df06defb234b",
+        "size": 264944,
+        "status": "IDENTITY_RECORDED",
+        "version": {
+          "exit": 0,
+          "stderr": "",
+          "stdout": "less 704 (PCRE2 regular expressions)\nCopyright (C) 1984-2026  Mark Nudelman\n\nless comes with NO WARRANTY, to the extent permitted by law.\nFor information about the terms of redistribution,\nsee the file named README in the less distribution.\nHome page: https://greenwoodsoftware.com/less\n"
+        }
+      },
+      {
+        "name": "hx",
+        "path": "/opt/homebrew/Cellar/helix/25.07.1/bin/hx",
+        "sha256": "dc1e5d1c9d414e2cfab872a4595c0128eb92c2d9fdf1636a7026e421bba47ce8",
+        "size": 26452848,
+        "status": "IDENTITY_RECORDED",
+        "version": {
+          "exit": 0,
+          "stderr": "",
+          "stdout": "helix 25.07.1 (a05c151b)\n"
+        }
+      },
+      {
+        "name": "kak",
+        "path": "/opt/homebrew/Cellar/kakoune/2026.05.21/bin/kak",
+        "sha256": "94124dff525353c1f8320d2a75c0d9755b16791d14305f9e07dadc04cf31113d",
+        "size": 2599480,
+        "status": "IDENTITY_RECORDED",
+        "version": {
+          "exit": 255,
+          "stderr": "Error while parsing parameters: unknown option '--version'\nValid switches:\n-c <arg>     connect to given session\n-C <arg>     connect to given session, create if it does not exist\n-e <arg>     execute argument on client initialisation\n-E <arg>     execute argument on server initialisation\n-n           do not source kakrc files on startup\n-s <arg>     set session name\n-d           run as a headless session (requires -s)\n-p <arg>     just send stdin as commands to the given session\n-f <arg>     filter: for each file, select the entire buffer and execute the given keys\n-i <arg>     backup the files on which a filter is applied using the given suffix\n-q           in filter mode, be quiet about errors applying keys\n-ui <arg>    set the type of user interface to use (terminal, dummy, or json)\n-l           list existing sessions\n-clear       clear dead sessions\n-debug <arg> initial debug option value\n-version     display kakoune version and exit\n-ro          readonly mode\n-help        display a help message and quit\n",
+          "stdout": ""
+        }
+      },
+      {
+        "name": "vis",
+        "path": "/usr/bin/vis",
+        "sha256": "3249eebe64f7401e908b241990a51bde865c0a3b5176318790358ce954068d69",
+        "size": 118256,
+        "status": "REJECTED_UNSUPPORTED",
+        "version": {
+          "exit": 1,
+          "stderr": "/usr/bin/vis: illegal option -- -\nUsage: vis [-bcfhlMmNnoSstw] [-e extra] [-F foldwidth] [file ...]\n",
+          "stdout": ""
+        }
+      }
+    ]
+  },
+  "corpus": {
+    "evidence": {
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+      "sha256": "7bd946c1ea66287650d7d3fccfb90853a6c56cc0cd893da19ede3b1b8859f737",
+      "size": 1073741824
+    },
+    "manifest": {
+      "head": "S9_C1_ROW_000000",
+      "line_bytes": 64,
+      "sha256": "7bd946c1ea66287650d7d3fccfb90853a6c56cc0cd893da19ede3b1b8859f737",
+      "size": 1073741824,
+      "tail": "S9_C1_TAIL"
+    }
+  },
+  "environment": {
+    "LANG": "en_US.UTF-8",
+    "TERM": "xterm-256color",
+    "TMPDIR": "/var/folders/rk/msdrltg54gb3b4pd0_6y0nt40000gn/T/"
+  },
+  "evidence": [
+    {
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/corpus/s9-1g.log",
+      "sha256": "7bd946c1ea66287650d7d3fccfb90853a6c56cc0cd893da19ede3b1b8859f737",
+      "size": 1073741824
+    },
+    {
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c1/bare-c1-1.json",
+      "sha256": "ce34fc032e1fd82dbd52eaf7c8875224b5ae3af1126b5f4e85bd4f9e1449d54e",
+      "size": 4836
+    },
+    {
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c1/bare-c1-2.json",
+      "sha256": "54114b73fe7fd66af28a7d7374c6619a65c4d2913e32bfed7a812e03381fb20f",
+      "size": 4836
+    },
+    {
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c1/bare-c1-3.json",
+      "sha256": "7aa3e309ff55bf77971dc0e26d8305b189d8383b498625920d7c01a7657cfdfc",
+      "size": 4836
+    },
+    {
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c1/bare-c1-4.json",
+      "sha256": "b3d5986257da8264f343ff56670bd48d0e50c167f08a521453dbc7c5a3668f92",
+      "size": 4834
+    },
+    {
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c1/bare-c1-5.json",
+      "sha256": "a3abb63fa3f76b41b44ed5cc88839696bcab34c580fe068a8d9fba9dfc794ebc",
+      "size": 4835
+    },
+    {
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c1/shipped-c1-1.json",
+      "sha256": "00a3d3a7ec726910761bb9205f4a56474be195e3a7a842149e8d617851026051",
+      "size": 5437
+    },
+    {
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c1/shipped-c1-2.json",
+      "sha256": "e3b7a030d24cb0e9185e9cac65704fa234ed728d17743302e05987b7d4fc0ec6",
+      "size": 5434
+    },
+    {
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c1/shipped-c1-3.json",
+      "sha256": "5cb39b7e5cdfe953e171f85a43bc19f9bb63f1567e3e0753afd894bf30e2b8e2",
+      "size": 5436
+    },
+    {
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c1/shipped-c1-4.json",
+      "sha256": "4a71af4d2c4427b49cd658c19d70c51681fac8cedb6841cf1354e563e96fe6bf",
+      "size": 5436
+    },
+    {
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c1/shipped-c1-5.json",
+      "sha256": "71726f93ac85729a45d063d87c48f8cc97f619527a578ac8017dd81e20cdae64",
+      "size": 5438
+    },
+    {
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c2-bare-attempt.json",
+      "sha256": "3c33eb491698239fa0825e332eed4a52297ae33527d27d30b4448a73af5ed380",
+      "size": 8223
+    },
+    {
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c2-bare.log",
+      "sha256": "e6bda1b117a61b27db7d6e1816b42928668dac0011fbf3c60805c87e3ff29b5f",
+      "size": 12
+    },
+    {
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c2-shipped-attempt.json",
+      "sha256": "97058641585ef2b93f202f6da633e6f04de4f4eae496b4a8b6b268f833440c47",
+      "size": 8390
+    },
+    {
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c2-shipped.log",
+      "sha256": "cebd2c8f9fca8074370af27e8db25c7b488e11cecf8d62ab486d37368cf2b8d1",
+      "size": 13
+    },
+    {
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c3-bare-attempt.json",
+      "sha256": "6d5df7b3f48de9bb0a4e770128855f874e8bdda40134291f1bfd722e9f5881b6",
+      "size": 21718
+    },
+    {
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c3-shipped-attempt.json",
+      "sha256": "bab76f122e0f9faaa43d8f0e6f19dec545b1bd94fdeaf39728e88e4c0906425f",
+      "size": 21880
+    },
+    {
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c5-rss.json",
+      "sha256": "d6396df22a3bebf2222855a347da963e676efcd0870bad7c4e66fe9bbd8b149e",
+      "size": 8981
+    },
+    {
+      "discarded_bytes": 0,
+      "full_bytes": 1969,
+      "full_sha256": "6137cf7f5cdb9d3b03f2af65e95e92116be118020cb62ec786df6a59852540a0",
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c4/bare-insert-save-crlf.trace",
+      "retained_bytes": 1969,
+      "sha256": "6137cf7f5cdb9d3b03f2af65e95e92116be118020cb62ec786df6a59852540a0",
+      "size": 1969
+    },
+    {
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c4/bare-insert-save-crlf.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c4/bare-insert-save-crlf-endpoint.json",
+      "sha256": "c154d5329d5223ca57f71c67caa7a4a2c53c41480f0e7788ff2943aaac547311",
+      "size": 693
+    },
+    {
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c4/bare-insert-save-crlf-saved.bin",
+      "sha256": "2eb12dde0c8b15b4464b1039c8b3a1973037039ef19add283f642fd10a9e3dfe",
+      "size": 45
+    },
+    {
+      "discarded_bytes": 0,
+      "full_bytes": 1982,
+      "full_sha256": "84d022ae0e4ac3465d598f6aba04251231c294ef98555436fbfa0d6983363ec5",
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c4/bare-insert-save-invalid.trace",
+      "retained_bytes": 1982,
+      "sha256": "84d022ae0e4ac3465d598f6aba04251231c294ef98555436fbfa0d6983363ec5",
+      "size": 1982
+    },
+    {
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c4/bare-insert-save-invalid.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c4/bare-insert-save-invalid-endpoint.json",
+      "sha256": "0f4915623dfb0fe98d5b6d2d0bb06b81e92e2f5c64463b31041b0c9d002086a1",
+      "size": 684
+    },
+    {
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c4/bare-insert-save-invalid-saved.bin",
+      "sha256": "90c3d7d5913e2357c8157f7b99b8ebb0af4b40ca17de18bf8e6862fbb1778d87",
+      "size": 29
+    },
+    {
+      "discarded_bytes": 0,
+      "full_bytes": 1987,
+      "full_sha256": "c22ab83be4b913c0568c33d5e68f4be562514537d7a7cc98e08698979f79d431",
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c4/shipped-insert-save-crlf.trace",
+      "retained_bytes": 1987,
+      "sha256": "c22ab83be4b913c0568c33d5e68f4be562514537d7a7cc98e08698979f79d431",
+      "size": 1987
+    },
+    {
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c4/shipped-insert-save-crlf.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c4/shipped-insert-save-crlf-endpoint.json",
+      "sha256": "461a212eef5f20da6b3922cd974a99361c937aafcdf882dba923be5c3a379d11",
+      "size": 696
+    },
+    {
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c4/shipped-insert-save-crlf-saved.bin",
+      "sha256": "2eb12dde0c8b15b4464b1039c8b3a1973037039ef19add283f642fd10a9e3dfe",
+      "size": 45
+    },
+    {
+      "discarded_bytes": 0,
+      "full_bytes": 2000,
+      "full_sha256": "ca7abd812bdd55bd5e0bca09f75e8c09076763bc4d5e77d8b7d0fae8fdaef755",
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c4/shipped-insert-save-invalid.trace",
+      "retained_bytes": 2000,
+      "sha256": "ca7abd812bdd55bd5e0bca09f75e8c09076763bc4d5e77d8b7d0fae8fdaef755",
+      "size": 2000
+    },
+    {
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c4/shipped-insert-save-invalid.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c4/shipped-insert-save-invalid-endpoint.json",
+      "sha256": "af32567e8fdb315d8c5a79c2c4cfff0ed756647c8024a3b799e5d08907fed775",
+      "size": 688
+    },
+    {
+      "path": "bench/artifacts/phase2-20260802T195611Z-68200ea341/c4/shipped-insert-save-invalid-saved.bin",
+      "sha256": "90c3d7d5913e2357c8157f7b99b8ebb0af4b40ca17de18bf8e6862fbb1778d87",
+      "size": 29
+    }
+  ],
+  "geometry": [
+    200,
+    50
+  ],
+  "host": {
+    "arch": "arm64",
+    "cpu": 8,
+    "free_bytes": 43362566144,
+    "kernel": "25.5.0",
+    "os": "macOS-26.5.2-arm64-arm-64bit-Mach-O"
+  },
+  "limitations": [
+    "PTY records application emission/transport, not physical rendering",
+    "warm cache/no purge",
+    "rendered screens are terminal-model evidence",
+    "renderer diagnostic remains a known observed failure"
+  ],
+  "phase": "phase2",
+  "profiles": {
+    "bare": {
+      "exact_files": [
+        "teddy"
+      ],
+      "files": {
+        "teddy": {
+          "arch": "arm64",
+          "path": "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/bare/teddy",
+          "sha256": "53d24a09e88cd872dc1e7b51ff1fc72d5c108ccf374dd67c5cf43b9c6cc0d9af",
+          "size": 471712,
+          "version": "teddy 0.2.0",
+          "version_capture": {
+            "exit": 0,
+            "stderr": "",
+            "stdout": "teddy 0.2.0\n"
+          }
+        }
+      }
+    },
+    "shipped": {
+      "exact_files": [
+        "teddy",
+        "teddy-highlight"
+      ],
+      "files": {
+        "teddy": {
+          "arch": "arm64",
+          "path": "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy",
+          "sha256": "53d24a09e88cd872dc1e7b51ff1fc72d5c108ccf374dd67c5cf43b9c6cc0d9af",
+          "size": 471712,
+          "version": "teddy 0.2.0",
+          "version_capture": {
+            "exit": 0,
+            "stderr": "",
+            "stdout": "teddy 0.2.0\n"
+          }
+        },
+        "teddy-highlight": {
+          "arch": "arm64",
+          "path": "/Users/kriant/w/teddy/bench/artifacts/phase2-20260802T195611Z-68200ea341/profiles/shipped/teddy-highlight",
+          "sha256": "4ca1d4d42650fa517a86f7cf3675a13d367c6da42127834245de7d677c169358",
+          "size": 302768,
+          "version": "",
+          "version_capture": {
+            "exit": 0,
+            "stderr": "",
+            "stdout": ""
+          }
+        }
+      }
+    }
+  },
+  "quiescence_ms": 5,
+  "repetitions": 5,
+  "schema": "teddy-s9-phase2-result-1",
+  "source": {
+    "commit": "4b7c96bef0e0522a076e800f1776aebf7d5cb347",
+    "dirty": true
+  }
+}
