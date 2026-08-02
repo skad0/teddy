@@ -92,8 +92,10 @@ python3 bench/run.sh full --allow-large
 ```
 
 It generates the canonical result only after validating all claim outcomes and
-immutable evidence. Phase 2 remains teddy-only; optional comparators are
-discovery-only and never affect teddy claims.
+immutable evidence. Phase 2 remains teddy-only for C1–C5. Identity-qualified
+comparators now execute as separate bounded open-screen observations and never
+affect teddy claims; unavailable, unsupported, aliased, or inconclusive tools
+remain honestly non-comparable.
 
 The current Phase 2 report is generated from one non-dry run. C2 requires a
 runtime `TEDDY_PERF` log and structured PTY action evidence; C3 requires named
@@ -123,3 +125,17 @@ a `c2-<profile>-attempt.json` artifact, which is hash-checked and compared
 exactly, including `association`, before derivation. C4 fixture statuses are
 derived from source-unchanged and computed/recorded/actual/expected saved
 digest equality; stored fixture and aggregate statuses cannot override them.
+
+Comparator attempt and aggregate statuses are likewise derived from their
+materialized artifacts, never trusted from canonical JSON. A comparator PASS
+requires exact argv/process-group identity and the `S9_C1_ROW_000000` corpus
+sentinel at the named readiness endpoint (a filename alone is insufficient),
+clean exit and reaping, both channel EOF/drain completion, no timeout, cap,
+unsupported output, cleanup error, remaining PGID, or descendants, and valid
+endpoint timing. Comparator observations remain non-claim and never affect
+teddy C1–C5. Reports identify editor runtime/config differences, Kakoune's
+two-process/server model, less's demand-driven pager model, and aliases or
+rejections rather than presenting them as comparable teddy measurements.
+Kakoune discovery probes `-version`; all seven names are retained exactly once,
+and each record is cross-checked against its discovery path, alias, status,
+invocation class, and argv.

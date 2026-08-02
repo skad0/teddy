@@ -187,6 +187,15 @@ class Phase1Tests(unittest.TestCase):
         self.assertEqual(bench.parse_perf_log("1 2 3 extra"),[])
         with self.assertRaises(ValueError): bench.validate_phase2_result({"schema":bench.PHASE2_SCHEMA,"phase":"phase2","claims":{"C1":{"status":"PASS","reason":"x"},"C2":{"status":"INCONCLUSIVE","reason":"x"},"C3":{"status":"INCONCLUSIVE","reason":"x"},"C4":{"status":"PASS","reason":"x"},"C5":{"status":"PASS","reason":"x"}},"artifact_root":{"path":"/tmp/no"}})
 
+    def test_comparator_command_contract(self):
+        corpus=str(Path("/tmp/s9-1g.log").resolve())
+        self.assertEqual(bench.comparator_argv("nvim","/bin/nvim",corpus),["/bin/nvim","--clean","-R","--",corpus])
+        self.assertEqual(bench.comparator_argv("vim","/bin/vim",corpus),["/bin/vim","--clean","-R","-i","NONE","-U","NONE","--",corpus])
+        self.assertEqual(bench.comparator_argv("hx","/bin/hx",corpus),["/bin/hx","--config","/dev/null","--",corpus])
+        self.assertEqual(bench.comparator_argv("kak","/bin/kak",corpus),["/bin/kak","-n","-ro","-ui","terminal","--",corpus])
+        self.assertEqual(bench.comparator_argv("less","/bin/less",corpus),["/bin/less","-n","-L","--",corpus])
+        with self.assertRaises(ValueError): bench.comparator_argv("vis","/usr/bin/vis",corpus)
+
     def test_phase2_validator_and_report_mutations(self):
         p=Path(__file__).parents[1]/"results"/"canonical.json"
         if not p.is_file(): self.skipTest("canonical Phase 2 result not present")
@@ -220,17 +229,29 @@ class Phase1Tests(unittest.TestCase):
         source=Path(__file__).parents[1]/"results"/"canonical.json"
         x=json.loads(source.read_text()); root=Path(directory)/"phase2-artifacts"; root.mkdir()
         old_root=x["artifact_root"]["path"]; x["artifact_root"]["path"]=str(root)
+        old_corpus=str((Path(__file__).parents[2]/x["corpus"]["evidence"]["path"]).resolve()); new_corpus=str((root/"s9-1g.log").resolve())
+        def replace_corpus(value):
+            if isinstance(value,dict):
+                for key,child in list(value.items()): value[key]=replace_corpus(child)
+            elif isinstance(value,list): return [replace_corpus(child) for child in value]
+            elif isinstance(value,str): return value.replace(old_corpus,new_corpus)
+            return value
+        x=replace_corpus(x)
         c1={r["artifact"]["path"]:r for rs in x["claims"]["C1"]["profiles"].values() for r in rs}
         c2={a["log"]["path"]:a for a in x["claims"]["C2"]["attempts"]}
         c2_attempt_evidence=[e for e in x.get("evidence",[]) if e.get("path","").endswith("-attempt.json") and "/c2-" in e.get("path","")]
         c2_attempts={e["path"]:a for e,a in zip(c2_attempt_evidence,x["claims"]["C2"]["attempts"])}
         c3={e["path"]:a for e,a in zip(x["claims"]["C3"]["evidence"],x["claims"]["C3"]["attempts"])}
+        comparator_records={r["artifact"]["path"]:{k:v for k,v in r.items() if k!="artifact"} for r in x.get("comparators",{}).get("records",[]) if isinstance(r.get("artifact"),dict)}
+        comparator_attempts={a["artifact"]["path"]:{k:v for k,v in a.items() if k!="artifact"} for r in x.get("comparators",{}).get("records",[]) for a in r.get("attempts",[]) if isinstance(a.get("artifact"),dict)}
         def materialize(value):
             if isinstance(value,dict):
-                if isinstance(value.get("path"),str) and len(value.get("sha256",""))==64:
+                if isinstance(value.get("path"),str) and len(value.get("sha256",""))==64 and value.get("name") not in bench.COMPARATOR_NAMES:
                     old=value["path"]; name=Path(old).name
                     if old in c1: data=(json.dumps({k:v for k,v in c1[old].items() if k!="artifact"},sort_keys=True)+"\n").encode()
                     elif old in c2_attempts: data=(json.dumps(c2_attempts[old],sort_keys=True,indent=2)+"\n").encode()
+                    elif old in comparator_records: data=(json.dumps(comparator_records[old],sort_keys=True,indent=2)+"\n").encode()
+                    elif old in comparator_attempts: data=(json.dumps(comparator_attempts[old],sort_keys=True,indent=2)+"\n").encode()
                     elif old in c2: data=("\n".join(f"{r['us']} {r['allocs']} {r['frame_bytes']}" for r in c2[old]["parsed_rows"])+"\n").encode()
                     elif old in c3: data=(json.dumps(c3[old],sort_keys=True)+"\n").encode()
                     else: data=b"phase2-fixture-artifact\n"
@@ -241,6 +262,27 @@ class Phase1Tests(unittest.TestCase):
         for fixture in x["claims"]["C4"]["fixtures"]:
             fixture["expected"]=fixture["actual_saved_sha256"]=hashlib.sha256(b"phase2-fixture-artifact\n").hexdigest()
         materialize(x)
+        def rewrite(descriptor,obj):
+            data=(json.dumps(obj,sort_keys=True,indent=2)+"\n").encode(); Path(descriptor["path"]).write_bytes(data); digest=hashlib.sha256(data).hexdigest(); size=len(data)
+            def sync(value):
+                if isinstance(value,dict):
+                    if value.get("path")==descriptor["path"]: value["sha256"]=digest; value["size"]=size
+                    for child in value.values(): sync(child)
+                elif isinstance(value,list):
+                    for child in value: sync(child)
+            sync(x)
+        for attempt in x["claims"]["C2"]["attempts"]:
+            descriptor=next(e for e in x["evidence"] if e.get("path","").endswith(f"c2-{attempt['profile']}-attempt.json")); rewrite(descriptor,attempt)
+        for attempt in x["claims"]["C3"]["attempts"]:
+            descriptor=next(e for e in x["evidence"] if e.get("path","").endswith(f"c3-{attempt['profile']}-attempt.json")); rewrite(descriptor,attempt)
+        for record in x.get("comparators",{}).get("records",[]):
+            if isinstance(record.get("artifact"),dict):
+                rewrite(record["artifact"],{k:v for k,v in record.items() if k!="artifact"})
+            for attempt in record.get("attempts",[]):
+                rewrite(attempt["artifact"],{k:v for k,v in attempt.items() if k!="artifact"})
+        for record in x.get("comparators",{}).get("records",[]):
+            if isinstance(record.get("artifact"),dict):
+                rewrite(record["artifact"],{k:v for k,v in record.items() if k!="artifact"})
         return x
 
     def test_phase2_clean_fixture_status_derivation_mutations(self):
@@ -261,6 +303,25 @@ class Phase1Tests(unittest.TestCase):
             reject("C4 forged INCONCLUSIVE",lambda x:x["claims"]["C4"].__setitem__("status","INCONCLUSIVE"))
             reject("C4 forged NOT_MEASURED",lambda x:x["claims"]["C4"].__setitem__("status","NOT_MEASURED"))
             reject("C4 fixture/status artifact mismatch",lambda x:(x["claims"]["C4"]["fixtures"][0].__setitem__("status","FAIL"),x["claims"]["C4"].__setitem__("status","FAIL")))
+            comparator=next((r for r in base.get("comparators",{}).get("records",[]) if r.get("attempts")),None)
+            if comparator:
+                def active(value): return next(r for r in value["comparators"]["records"] if r.get("name")==comparator["name"])
+                reject("comparator forged aggregate PASS",lambda x:active(x).__setitem__("status","PASS"))
+                reject("comparator forged attempt PASS",lambda x:active(x)["attempts"][0].__setitem__("status","PASS"))
+                reject("comparator argv identity",lambda x:active(x)["attempts"][0].__setitem__("argv",["/forged"]))
+                reject("comparator filename-only readiness",lambda x:(active(x)["attempts"][0]["readiness"].__setitem__("matched",True),active(x)["attempts"][0]["readiness"].__setitem__("snapshot",[Path(active(x)["argv"][-1]).name])))
+                reject("comparator corpus path substitution",lambda x:active(x).__setitem__("argv",active(x)["argv"][:-1]+["/forged/corpus.log"]))
+                reject("comparator readiness endpoint",lambda x:active(x)["attempts"][0]["readiness"].__setitem__("matched",False))
+                reject("comparator lifecycle",lambda x:active(x)["attempts"][0]["process"].__setitem__("reaped",False))
+                reject("comparator discovery path",lambda x:next(t for t in x["comparators"]["tools"] if t["name"]==comparator["name"]).__setitem__("path","/forged/tool"))
+                reject("comparator discovery alias",lambda x:next(t for t in x["comparators"]["tools"] if t["name"]=="vi").__setitem__("alias_of","nvim"))
+                reject("Kakoune forged unavailable",lambda x:next(t for t in x["comparators"]["tools"] if t["name"]=="kak").__setitem__("status","UNAVAILABLE"))
+                reject("vis forged alias",lambda x:(next(t for t in x["comparators"]["tools"] if t["name"]=="vis").__setitem__("status","ALIAS_OF"),next(t for t in x["comparators"]["tools"] if t["name"]=="vis").__setitem__("alias_of","vim")))
+                reject("vis status downgrade",lambda x:next(t for t in x["comparators"]["tools"] if t["name"]=="vis").__setitem__("status","UNSUPPORTED"))
+                raw_path=Path(comparator["attempts"][0]["artifact"]["path"])
+                raw_path.write_text("not-json\n")
+                with self.assertRaises(ValueError,msg="malformed comparator raw artifact"):
+                    bench.validate_phase2_result(base)
 
     def test_valid_result_mutations_are_rejected(self):
         with tempfile.TemporaryDirectory() as d:

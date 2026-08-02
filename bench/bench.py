@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The deliberately small, non-claim-producing S9 phase-one harness."""
 from __future__ import annotations
-import argparse, codecs, hashlib, json, os, pty, select, signal, struct, subprocess, statistics, re
+import argparse, codecs, hashlib, json, math, os, pty, select, signal, struct, subprocess, statistics, re
 import sys, tempfile, time, unittest, resource, platform, shutil, shlex, uuid
 from pathlib import Path
 
@@ -632,14 +632,94 @@ def _c3_attempt(profile,large,run):
         cancel=s.write(b"\x1b",lambda sc:sc.contains(large.name) and sc.contains("S9_C1_ROW_000000"),"search_cancel")
     clean=s.close(); tag=profile["root"].split("/")[-2]; p=Path(run)/("c3-"+tag+"-attempt.json"); rec={"profile":tag,"needle":needle.decode(),"keys":{"start_search":"Ctrl-F","submit":"Enter","cancel":"Escape"},"ready":ready,"prompt_observed":prompt,"search_observed":search,"cancel_observed":cancel,"actions":[a for a in s.record()["actions"]],"clean":clean,"process":s.record(),"semantic_association":bool(prompt and search and cancel)}; p.write_text(json.dumps(rec,sort_keys=True,indent=2)+"\n"); shutil.rmtree(home,ignore_errors=True); return rec,_phase2_file(p,REPO)
 
+COMPARATOR_NAMES=("nvim","vim","vi","hx","kak","less","vis")
+COMPARATOR_RUN_NAMES=("nvim","vim","hx","kak","less")
+_LESS_ENV_CLEAR=("LESS","MORE","LESSKEY","LESSKEY_SYSTEM","LESSKEYIN","LESSKEYIN_SYSTEM","LESSOPEN","LESSCLOSE")
+
+def comparator_argv(name,path,corpus):
+    path=str(Path(path).resolve()); corpus=str(Path(corpus).resolve())
+    if name=="nvim": return [path,"--clean","-R","--",corpus]
+    if name in ("vim","vi"): return [path,"--clean","-R","-i","NONE","-U","NONE","--",corpus]
+    if name=="hx": return [path,"--config","/dev/null","--",corpus]
+    if name=="kak": return [path,"-n","-ro","-ui","terminal","--",corpus]
+    if name=="less": return [path,"-n","-L","--",corpus]
+    raise ValueError("unsupported comparator")
+
+def comparator_environment(home,name):
+    env=isolated_env(home)
+    if name=="less":
+        env["LESSHISTFILE"]="-"
+        for key in _LESS_ENV_CLEAR: env.pop(key,None)
+    return env
+
 def discover_comparators():
-    out=[]
-    for name in ("nvim","vim","vi","less","hx","kak","vis"):
+    out=[]; seen={}
+    for name in COMPARATOR_NAMES:
         path=shutil.which(name) or ("/usr/bin/vis" if name=="vis" and Path("/usr/bin/vis").exists() else None)
         if not path: out.append({"name":name,"status":"UNAVAILABLE"}); continue
-        h,z=sha(path); probe=subprocess.run([path,"--version"],capture_output=True,text=True,timeout=2); status="REJECTED_UNSUPPORTED" if path=="/usr/bin/vis" else "IDENTITY_RECORDED"
-        out.append({"name":name,"status":status,"path":str(Path(path).resolve()),"sha256":h,"size":z,"version":{"stdout":probe.stdout,"stderr":probe.stderr,"exit":probe.returncode}})
+        resolved=str(Path(path).resolve())
+        if resolved in seen:
+            out.append({"name":name,"status":"ALIAS_OF","alias_of":seen[resolved],"path":resolved}); continue
+        seen[resolved]=name; h,z=sha(path)
+        try:
+            probe_arg="-version" if name=="kak" else "--version"
+            probe=subprocess.run([resolved,probe_arg],capture_output=True,text=True,timeout=2)
+            status="REJECTED_UNSUPPORTED" if resolved=="/usr/bin/vis" else ("IDENTITY_RECORDED" if probe.returncode==0 else "UNSUPPORTED")
+            version={"stdout":probe.stdout,"stderr":probe.stderr,"exit":probe.returncode}
+        except Exception as e:
+            status="REJECTED_UNSUPPORTED" if resolved=="/usr/bin/vis" else "UNSUPPORTED"; version={"stdout":"","stderr":type(e).__name__,"exit":None}
+        out.append({"name":name,"status":status,"path":resolved,"sha256":h,"size":z,"version":version})
     return out
+
+def _comparator_quit(s,name):
+    sequences={"nvim":b":q!\r","vim":b":q!\r","vi":b":q!\r","hx":b":q!\r","kak":b":q\r","less":b"q"}
+    try: os.write(s.master,sequences[name])
+    except OSError: pass
+    deadline=time.monotonic()+1.5
+    while s.pid>0 and time.monotonic()<deadline:
+        s._read(.01); s.poll()
+
+def _comparator_attempt(tool,corpus,run,index):
+    name=tool["name"]; argv=comparator_argv(name,tool["path"],corpus); home=Path(tempfile.mkdtemp(prefix="s9-comparator-home-")); s=Session(argv,timeout=6); s.extra_env=comparator_environment(home,name); s.spawn(home,home); identity=exact_group_identity(process_group(s.original_pgid),argv); ready=s.until(lambda sc:sc.contains("S9_C1_ROW_000000"),"comparator_ready"); s.readiness=ready; _comparator_quit(s,name); clean=s.close(); process=s.record(); screen=Path(run)/(f"comparator-{name}-{index}-screen.txt"); trace=Path(run)/(f"comparator-{name}-{index}-trace.bin"); screen.write_text("\n".join(process["screen"])+"\n"); trace.write_bytes(s.trace); screen_evidence=_phase2_file(screen,REPO); trace_evidence=_phase2_file(trace,REPO); valid=bool(ready.get("matched")) and identity[0] and clean and process.get("exit")==0 and process.get("reaped") and process.get("drain_complete") and not process.get("drain_deadline") and not process.get("cleanup_error") and not process.get("pgid_after") and not process.get("descendants_left") and not process.get("timed_out") and not process.get("pty_output_capped") and not process.get("stderr_capped") and not process.get("unsupported"); rec={"name":name,"rep":index,"status":"PASS" if valid else "INCONCLUSIVE","argv":argv,"invocation_class":name,"identity":identity[0],"readiness":ready,"elapsed_ms":ready.get("matched_at")*1000 if ready.get("matched_at") is not None else None,"process":process,"screen":screen_evidence,"trace":trace_evidence}; raw=Path(run)/(f"comparator-{name}-{index}-attempt.json"); raw.write_text(json.dumps(rec,sort_keys=True,indent=2)+"\n"); rec["artifact"]=_phase2_file(raw,REPO); shutil.rmtree(home,ignore_errors=True); return rec
+
+def run_comparators(tools,corpus,run):
+    records=[]; evidence=[]
+    for tool in tools:
+        common={"name":tool["name"],"path":tool.get("path"),"alias_of":tool.get("alias_of"),"discovery_status":tool["status"],"invocation_class":tool["name"]}
+        if tool["name"] not in COMPARATOR_RUN_NAMES or tool.get("status")!="IDENTITY_RECORDED":
+            records.append({**common,"status":tool["status"],"attempts":[]}); continue
+        attempts=[_comparator_attempt(tool,corpus,run,i) for i in range(1,3)]; q=phase2_quantiles([a["elapsed_ms"] for a in attempts if a.get("elapsed_ms") is not None]); status="PASS" if all(a["status"]=="PASS" for a in attempts) else "INCONCLUSIVE"; rec={**common,"status":status,"argv":comparator_argv(tool["name"],tool["path"],corpus),"attempts":attempts,"quantiles_ms":q}; raw=Path(run)/(f"comparator-{tool['name']}.json"); raw.write_text(json.dumps(rec,sort_keys=True,indent=2)+"\n"); rec["artifact"]=_phase2_file(raw,REPO); records.append(rec); evidence.append(rec["artifact"]); evidence.extend(a["artifact"] for a in attempts); evidence.extend(a[k] for a in attempts for k in ("screen","trace"))
+    return records,evidence
+
+def _comparator_attempt_status(attempt, expected_argv):
+    """Derive, rather than trust, the status of one comparator observation."""
+    process=attempt.get("process")
+    readiness=attempt.get("readiness")
+    if not isinstance(process,dict) or not isinstance(readiness,dict): return "INCONCLUSIVE"
+    observed=process.get("identity")
+    snapshot=readiness.get("snapshot")
+    matched_endpoint=(isinstance(snapshot,list) and
+                      any(isinstance(line,str) and "S9_C1_ROW_000000" in line
+                          for line in snapshot))
+    identity=(attempt.get("identity") is True and
+              observed.get("argv") == expected_argv and observed.get("verified") is True
+              if isinstance(observed,dict) else False)
+    timing=(isinstance(attempt.get("elapsed_ms"),(int,float)) and
+            math.isfinite(attempt["elapsed_ms"]) and attempt["elapsed_ms"] >= 0 and
+            isinstance(readiness.get("matched_at"),(int,float)) and
+            math.isfinite(readiness["matched_at"]) and
+            attempt["elapsed_ms"] == readiness["matched_at"]*1000)
+    lifecycle=(readiness.get("matched") is True and readiness.get("name")=="comparator_ready" and
+               matched_endpoint and identity and timing and
+               process.get("exit")==0 and process.get("signal") is None and
+               process.get("reaped") is True and process.get("pty_eof") is True and
+               process.get("stderr_eof") is True and process.get("drain_complete") is True and
+               not process.get("drain_deadline") and not process.get("cleanup_error") and
+               not process.get("pgid_after") and not process.get("descendants_left") and
+               not process.get("timed_out") and not process.get("pty_output_capped") and
+               not process.get("stderr_capped") and not process.get("unsupported") and
+               process.get("exec_failed") is False)
+    return "PASS" if lifecycle else "INCONCLUSIVE"
 
 def _phase2_rep(profile,large,root,run_id,index):
     home=Path(tempfile.mkdtemp(prefix="s9-p2-home-")); copy=Path(large); s=Session([profile["root"],str(copy)],timeout=8); s.spawn(home,home); expected=[str(profile["root"]),str(copy)]; probe=process_group(s.original_pgid); ok,members,error=probe; identity=exact_group_identity(probe,expected,[profile["helper"]] if profile["helper"] else None); rss=[_rss_snapshot(s.original_pgid,members)]; ready=s.until(lambda sc:sc.alt and sc.contains(copy.name) and sc.contains("S9_C1_ROW_000000"),"c1_ready"); s.readiness=ready; rss.append(_rss_snapshot(s.original_pgid,process_group(s.original_pgid)[1])); quiet=s.quiet() if ready.get("matched") else False; clean=s.close(); valid=bool(ready.get("matched")) and quiet and clean and ok and identity[0] and s.drain_complete and not s.pgid_after and not s.descendants and not s.timed_out and not s.output_capped and not s.stderr_capped and not s.screen.unsupported; elapsed=ready.get("matched_at") if ready.get("matched") else None
@@ -735,9 +815,38 @@ def validate_phase2_result(x):
     expected_c4_status="PASS" if all(r.get("status")=="PASS" for r in c4["fixtures"]) else "FAIL"
     if c4.get("status")!=expected_c4_status: raise ValueError("C4 matrix/status inconsistency")
     tools=x.get("comparators",{}).get("tools",[])
-    if x.get("comparators",{}).get("status") not in {"DISCOVERED","UNAVAILABLE","SUPPORTED","REJECTED"} or not isinstance(tools,list) or {t.get("name") for t in tools}!={"nvim","vim","vi","less","hx","kak","vis"}: raise ValueError("invalid comparator outcome")
+    expected_names=set(COMPARATOR_NAMES)
+    if x.get("comparators",{}).get("status") not in {"DISCOVERED","UNAVAILABLE","SUPPORTED","REJECTED"} or not isinstance(tools,list) or len(tools)!=7 or {t.get("name") for t in tools}!=expected_names: raise ValueError("invalid comparator outcome")
+    if len({t.get("name") for t in tools})!=7: raise ValueError("duplicate comparator identity")
     vis=next(t for t in tools if t.get("name")=="vis")
     if vis.get("path")=="/usr/bin/vis" and vis.get("status")!="REJECTED_UNSUPPORTED": raise ValueError("/usr/bin/vis not rejected")
+    records=x.get("comparators",{}).get("records")
+    if records is not None:
+        if not isinstance(records,list) or len(records)!=7 or {r.get("name") for r in records}!={t.get("name") for t in tools}: raise ValueError("comparator record matrix mismatch")
+        for r in records:
+            tool=next(t for t in tools if t.get("name")==r.get("name"))
+            if r.get("path")!=tool.get("path") or r.get("alias_of")!=tool.get("alias_of") or r.get("discovery_status")!=tool.get("status") or r.get("invocation_class")!=r.get("name"): raise ValueError("comparator discovery/record identity mismatch")
+            if r.get("status") not in {"PASS","INCONCLUSIVE","UNAVAILABLE","UNSUPPORTED","REJECTED_UNSUPPORTED","ALIAS_OF"}: raise ValueError("invalid comparator status")
+            if r.get("status") in {"UNAVAILABLE","UNSUPPORTED","REJECTED_UNSUPPORTED","ALIAS_OF"}:
+                if r.get("status")!=tool.get("status"): raise ValueError("inactive comparator status mismatch")
+                if r.get("attempts"): raise ValueError("unsupported comparator has attempts")
+                continue
+            if len(r.get("attempts",[]))!=2 or not isinstance(r.get("artifact"),dict): raise ValueError("missing comparator attempts")
+            canonical_corpus=str(_check_artifact(x["corpus"]["evidence"],x["artifact_root"]).resolve())
+            if r.get("discovery_status")!="IDENTITY_RECORDED" or r.get("argv")!=comparator_argv(r["name"],tool["path"],canonical_corpus): raise ValueError("comparator argv identity mismatch")
+            rp=_check_artifact(r["artifact"],x["artifact_root"]); raw=json.loads(rp.read_text())
+            if raw!={k:v for k,v in r.items() if k!="artifact"}: raise ValueError("comparator record artifact mismatch")
+            for a in r["attempts"]:
+                if a.get("status") not in {"PASS","INCONCLUSIVE"} or not isinstance(a.get("process"),dict): raise ValueError("invalid comparator attempt")
+                ap=_check_artifact(a["artifact"],x["artifact_root"]); ar=json.loads(ap.read_text())
+                if ar!={k:v for k,v in a.items() if k!="artifact"}: raise ValueError("comparator attempt artifact mismatch")
+                _check_artifact(a["screen"],x["artifact_root"]); _check_artifact(a["trace"],x["artifact_root"])
+                expected_attempt=_comparator_attempt_status(a,comparator_argv(r["name"],tool["path"],canonical_corpus))
+                if a.get("status")!=expected_attempt: raise ValueError("comparator attempt status mismatch")
+            expected_status="PASS" if all(_comparator_attempt_status(a,comparator_argv(r["name"],tool["path"],canonical_corpus))=="PASS" for a in r["attempts"]) else "INCONCLUSIVE"
+            if r.get("status")!=expected_status: raise ValueError("comparator aggregate/status mismatch")
+            expected_quantiles=phase2_quantiles([a["elapsed_ms"] for a in r["attempts"] if isinstance(a.get("elapsed_ms"),(int,float))])
+            if r.get("quantiles_ms")!=expected_quantiles: raise ValueError("comparator forged quantiles")
     return True
 
 def phase2_report_markdown(result):
@@ -752,6 +861,18 @@ def phase2_report_markdown(result):
     lines += ["","## Runtime claim details",f"- **C2:** {len(c['C2'].get('attempts',[]))} runtime attempts; {sum(a.get('line_count',0) for a in c['C2'].get('attempts',[]))} parsed perf lines; p95 `{c['C2'].get('quantiles_us',{}).get('p95')}` us; action association `{c['C2']['status'] == 'PASS'}`.",f"- **C3:** {len(c['C3'].get('attempts',[]))} PTY attempts; named prompt/search/cancel actions retained; semantic association `{c['C3']['status'] == 'PASS'}`.",f"- **C4:** {sum(1 for x in c['C4'].get('fixtures',[]) if x.get('status')=='PASS')}/{len(c['C4'].get('fixtures',[]))} fixture/profile digest checks passed.",f"- **C5:** {len(c['C5'].get('samples',[]))} workload sample records; RSS is diagnostic only and remains `NOT_MEASURED`.","","## Comparators","","| Tool | Status | Identity | Version probe |","|---|---|---|---|"]
     for t in result["comparators"]["tools"]:
         ident=f"`{t.get('path','-')}` `{t.get('sha256','-')[:12]}`" if t.get("path") else "-"; probe=t.get("version",{}).get("exit","-") if isinstance(t.get("version"),dict) else "-"; lines.append(f"| {t['name']} | {t['status']} | {ident} | exit `{probe}` |")
+    lines += ["","## Comparator comparison","","| Tool | Status | Exact identity | Invocation class | Repetitions / p50 / p95 (ms) | Caveat |","|---|---|---|---|---|---|"]
+    for r in result["comparators"].get("records",[]):
+        q=r.get("quantiles_ms",{})
+        fmt=lambda value: f"{value:.3f}" if isinstance(value,(int,float)) else "unavailable"
+        metric=f"{q.get('count',0)} / {fmt(q.get('p50'))} / {fmt(q.get('p95'))}" if r.get("attempts") else "unavailable"
+        name=r["name"]
+        if r.get("status")=="ALIAS_OF": caveat="alias/rejected identity; not comparable"
+        elif r.get("status") in {"UNAVAILABLE","UNSUPPORTED","REJECTED_UNSUPPORTED"}: caveat="unavailable/rejected: Kakoune uses a two-process server model; not comparable" if name=="kak" else "unavailable, unsupported, or rejected; not comparable"
+        elif name=="kak": caveat="Kakoune two-process/server model; editor runtime/config differs; open-screen only, not a teddy claim"
+        elif name=="less": caveat="less is a demand-driven pager; editor runtime/config differs; open-screen only, not a teddy claim"
+        else: caveat="editor runtime/config differs from teddy; open-screen observation only, not a teddy claim"
+        lines.append(f"| {name} | {r.get('status','-')} | `{r.get('path','unavailable')}` | `{r.get('invocation_class','-')}` | {metric} | {caveat} |")
     lines += ["","## Reproducibility","",f"- Command: `{result['command']}`",f"- Bundle: `{result['artifact_root']['path']}`",f"- Geometry: `{result['geometry'][0]}x{result['geometry'][1]}`; repetitions `{result['repetitions']}`; quiescence `{result['quiescence_ms']} ms`",f"- Environment: `{len(result['environment'])}` sanitized variables; host `{result['host']['os']}`, kernel `{result['host']['kernel']}`, arch `{result['host']['arch']}`", "- Evidence paths and SHA-256 values are recorded in the canonical JSON and remain immutable.","","## Limitations","","- PTY evidence measures application emission/transport and terminal-model screens, not physical rendering.","- C1 uses warm-cache runs without cache purge.","- C2/C3 remain INCONCLUSIVE where action semantics cannot be established; C5 has no performance budget."]
     if len(lines)>250: raise ValueError("Phase 2 report exceeds reviewable line bound")
     return "\n".join(lines)+"\n"
@@ -768,7 +889,9 @@ def validate_phase2_report(result,text):
     if result["artifact_root"]["path"] not in text or result["source"]["commit"] not in text or result["cargo_package_version"] not in text or runtime not in text: raise ValueError("report metadata parity failure")
     for t in result["comparators"]["tools"]:
         if f"| {t['name']} | {t['status']} |" not in text: raise ValueError("report comparator parity failure")
-    for heading in ("## Executive summary","## C1 repetitions","## Runtime claim details","## Comparators","## Reproducibility","## Limitations"):
+    for r in result["comparators"].get("records",[]):
+        if f"| {r['name']} |" not in text: raise ValueError("report comparator table parity failure")
+    for heading in ("## Executive summary","## C1 repetitions","## Runtime claim details","## Comparators","## Comparator comparison","## Reproducibility","## Limitations"):
         if heading not in text: raise ValueError("report required section missing")
     return True
 
@@ -788,8 +911,8 @@ def full(a):
     for p in profiles.values():
         attempt,ev=_c3_attempt(p,large,run); c3_attempts.append(attempt); c3_evidence.append(ev)
     rss_samples=[{"profile":p,"rep":r["rep"],"samples":r["rss_samples"],"peak_bytes":r["rss_peak_bytes"]} for p,rs in reps.items() for r in rs]; rss_path=run/"c5-rss.json"; rss_path.write_text(json.dumps({"samples":rss_samples,"status":"NOT_MEASURED","reason":"RSS samples are diagnostic only"},sort_keys=True)+"\n"); rss_evidence=_phase2_file(rss_path,REPO)
-    comparators=discover_comparators(); evidence=[large_meta]+[r["artifact"] for rs in reps.values() for r in rs]+c2_evidence+c3_evidence+[rss_evidence]+c4_evidence
-    result={"schema":PHASE2_SCHEMA,"phase":"phase2","command":"python3 bench/bench.py full --allow-large","artifact_root":{"path":label,"resolvable_from":"repository root"},"source":{"commit":subprocess.check_output(["git","rev-parse","HEAD"],cwd=REPO,text=True).strip(),"dirty":bool(subprocess.check_output(["git","status","--porcelain"],cwd=REPO))},"cargo_package_version":json.loads(subprocess.check_output(["cargo","metadata","--no-deps","--format-version","1"],cwd=REPO,text=True))["packages"][0]["version"],"profiles":{p:{"files":v["files"],"exact_files":v["exact_files"]} for p,v in profiles.items()},"environment":phase2_environment(),"host":{"os":platform.platform(),"kernel":platform.release(),"arch":platform.machine(),"cpu":os.cpu_count(),"free_bytes":shutil.disk_usage(REPO).free},"geometry":[200,50],"repetitions":5,"quiescence_ms":5,"corpus":{"manifest":manifest,"evidence":large_meta},"claims":{"C1":{"status":c1status,"reason":"validated teddy-only warm PTY repetitions; predeclared p95 threshold is 50ms","profiles":reps,"quantiles_ms":c1q},"C2":{"status":c2_status,"reason":"runtime perf PTY attempt; action association is required for PASS","attempts":c2_attempts,"quantiles_us":phase2_quantiles([r["us"] for r in c2_rows])},"C3":{"status":"INCONCLUSIVE","reason":"real literal-search/cancellation PTY attempts retained; UI action association is not established","attempts":c3_attempts,"evidence":c3_evidence},"C4":{"status":"PASS" if all(x["status"]=="PASS" for x in c4) else "FAIL","reason":"isolated teddy integration and declared fixture digest verification","fixtures":c4},"C5":{"status":"NOT_MEASURED","reason":"RSS samples are diagnostic only; no performance budget","samples":rss_samples,"evidence":rss_evidence}},"comparators":{"status":"DISCOVERED","tools":comparators},"evidence":evidence,"limitations":["PTY records application emission/transport, not physical rendering","warm cache/no purge","rendered screens are terminal-model evidence","renderer diagnostic remains a known observed failure"]}; validate_phase2_result(result); (REPO/"bench/results").mkdir(parents=True,exist_ok=True); (REPO/"bench/results/canonical.json").write_text(json.dumps(result,indent=2,sort_keys=True)+"\n"); (REPO/"docs/bench_results.md").write_text("# S9 Phase 2 benchmark results\n\nCommand: `"+result["command"]+"`\n\nArtifact root: `"+result["artifact_root"]["path"]+"`\n\nSource: `"+result["source"]["commit"]+"` (dirty="+str(result["source"]["dirty"])+")\n\nPackage version: `"+result["cargo_package_version"]+"`\n\n## Claim summary\n\n"+"\n".join("| "+k+" | "+v["status"]+" | "+v["reason"]+" |" for k,v in result["claims"].items())+"\n\n## Evidence and reproducibility\n\n"+json.dumps({k:result[k] for k in ("profiles","environment","host","geometry","repetitions","quiescence_ms","corpus","comparators","evidence","limitations")},indent=2,sort_keys=True)+"\n"); print(json.dumps(result,indent=2,sort_keys=True))
+    comparators=discover_comparators(); comparator_records,comparator_evidence=run_comparators(comparators,large,run); evidence=[large_meta]+[r["artifact"] for rs in reps.values() for r in rs]+c2_evidence+c3_evidence+[rss_evidence]+c4_evidence+comparator_evidence
+    result={"schema":PHASE2_SCHEMA,"phase":"phase2","command":"python3 bench/bench.py full --allow-large","artifact_root":{"path":label,"resolvable_from":"repository root"},"source":{"commit":subprocess.check_output(["git","rev-parse","HEAD"],cwd=REPO,text=True).strip(),"dirty":bool(subprocess.check_output(["git","status","--porcelain"],cwd=REPO))},"cargo_package_version":json.loads(subprocess.check_output(["cargo","metadata","--no-deps","--format-version","1"],cwd=REPO,text=True))["packages"][0]["version"],"profiles":{p:{"files":v["files"],"exact_files":v["exact_files"]} for p,v in profiles.items()},"environment":phase2_environment(),"host":{"os":platform.platform(),"kernel":platform.release(),"arch":platform.machine(),"cpu":os.cpu_count(),"free_bytes":shutil.disk_usage(REPO).free},"geometry":[200,50],"repetitions":5,"quiescence_ms":5,"corpus":{"manifest":manifest,"evidence":large_meta},"claims":{"C1":{"status":c1status,"reason":"validated teddy-only warm PTY repetitions; predeclared p95 threshold is 50ms","profiles":reps,"quantiles_ms":c1q},"C2":{"status":c2_status,"reason":"runtime perf PTY attempt; action association is required for PASS","attempts":c2_attempts,"quantiles_us":phase2_quantiles([r["us"] for r in c2_rows])},"C3":{"status":"INCONCLUSIVE","reason":"real literal-search/cancellation PTY attempts retained; UI action association is not established","attempts":c3_attempts,"evidence":c3_evidence},"C4":{"status":"PASS" if all(x["status"]=="PASS" for x in c4) else "FAIL","reason":"isolated teddy integration and declared fixture digest verification","fixtures":c4},"C5":{"status":"NOT_MEASURED","reason":"RSS samples are diagnostic only; no performance budget","samples":rss_samples,"evidence":rss_evidence}},"comparators":{"status":"DISCOVERED","tools":comparators,"records":comparator_records},"evidence":evidence,"limitations":["PTY records application emission/transport, not physical rendering","warm cache/no purge","rendered screens are terminal-model evidence","renderer diagnostic remains a known observed failure"]}; validate_phase2_result(result); (REPO/"bench/results").mkdir(parents=True,exist_ok=True); (REPO/"bench/results/canonical.json").write_text(json.dumps(result,indent=2,sort_keys=True)+"\n"); validate_phase2_result(result); render_phase2_report(result); validate_phase2_report(result,(REPO/"docs/bench_results.md").read_text()); print(json.dumps(result,indent=2,sort_keys=True))
 
 def helper(a):
     if a.mode=="ansi": print("\033[?25l\033[?1049h\033[2J\033[1;1Hraw helper\033[2K\033[?1049l\033[?25h")
