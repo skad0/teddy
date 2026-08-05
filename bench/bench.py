@@ -8,7 +8,9 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parent; REPO=ROOT.parent
 CORPUS=json.loads((ROOT/"corpora.json").read_text()); FIX=CORPUS["fixtures"]
 PHASE="phase1"; RESULT_SCHEMA="teddy-s9-phase1-result-5"; MANIFEST_SCHEMA="teddy-s9-phase1-manifest-3"
-PHASE2_SCHEMA="teddy-s9-phase2-result-1"
+PHASE2_SCHEMA="teddy-s9-phase2-result-2"
+PHASE2_METHODOLOGY="s9-c1-post-readiness-observer-1"
+PHASE2_HISTORICAL_CONTEXT="The prior canonical Phase 2 C1 result was FAIL and used pre-drain identity/PGID observation; it remains immutable historical context and is not silently overwritten."
 PHASE2_ENV_ALLOWLIST={"LANG","LC_ALL","LC_CTYPE","TERM","TZ","XDG_CONFIG_HOME","XDG_DATA_HOME","XDG_STATE_HOME","XDG_CACHE_HOME","TMPDIR"}
 CLAIMS={c:{"status":"NOT_MEASURED","reason":"Phase 1 measures harness health only"} for c in "C1 C2 C3 C4 C5".split()}
 
@@ -149,15 +151,19 @@ class Screen:
 
 class Session:
     def __init__(self,argv,geometry=(200,50),timeout=4,output_cap=4<<20,stderr_cap=1<<20):
-        self.argv=argv; self.geometry=geometry; self.timeout=timeout; self.output_cap=output_cap; self.stderr_cap=stderr_cap; self.out=bytearray(); self.err=bytearray(); self.trace=bytearray(); self.trace_bytes=0; self.trace_discarded_bytes=0; self.trace_hash=hashlib.sha256(); self.stderr_full_bytes=self.output_full_bytes=0; self.trace_cap=4<<20; self.screen=Screen(*geometry); self.actions=[]; self.endpoint_snapshots=[]; self.output_capped=self.stderr_capped=self.timed_out=False; self.status=None; self.pid=-1; self.root_pid=-1; self.pgid=-1; self.original_pgid=-1; self.closed=False; self.cleanup_error=None; self.drain_reason=None; self.last_output=None; self.first_output=None; self.output_events=[]; self.spawn_at=None; self.descendants=[]; self.pgid_before=[]; self.pgid_after=[]; self.pgid_probe_error=None; self.pgid_before_probe_error=None; self.pgid_after_probe_error=None; self.drain_complete=False; self.drain_deadline=False; self.pty_eof=self.stderr_eof=False
+        self.argv=argv; self.geometry=geometry; self.timeout=timeout; self.output_cap=output_cap; self.stderr_cap=stderr_cap; self.out=bytearray(); self.err=bytearray(); self.trace=bytearray(); self.trace_bytes=0; self.trace_discarded_bytes=0; self.trace_hash=hashlib.sha256(); self.stderr_full_bytes=self.output_full_bytes=0; self.trace_cap=4<<20; self.screen=Screen(*geometry); self.actions=[]; self.endpoint_snapshots=[]; self.output_capped=self.stderr_capped=self.timed_out=False; self.status=None; self.pid=-1; self.root_pid=-1; self.pgid=-1; self.original_pgid=-1; self.closed=False; self.cleanup_error=None; self.drain_reason=None; self.last_output=None; self.first_output=None; self.output_events=[]; self.spawn_at=None; self.descendants=[]; self.pgid_before=[]; self.pgid_after=[]; self.pgid_probe_error=None; self.pgid_before_probe_error=None; self.pgid_after_probe_error=None; self.group_probe_started_ms=None; self.group_probe_finished_ms=None; self.group_probe_ms=None; self.drain_complete=False; self.drain_deadline=False; self.pty_eof=self.stderr_eof=False
         self.extra_env={}
-    def spawn(self,home,cwd):
-        self.master,self.slave=pty.openpty(); self.er,self.ew=os.pipe(); self.pid=os.fork()
+    def spawn(self,home,cwd,preflight=True):
+        self.fork_started_wall=time.monotonic(); self.master,self.slave=pty.openpty(); self.er,self.ew=os.pipe(); self.pid=os.fork()
         if self.pid==0:
             try:
                 os.setsid(); import fcntl,termios; fcntl.ioctl(self.slave,termios.TIOCSCTTY,0); _winsize(self.slave,self.geometry); os.dup2(self.slave,0); os.dup2(self.slave,1); os.dup2(self.ew,2); os.chdir(cwd); env=isolated_env(Path(home)); env.update(self.extra_env); os.execve(self.argv[0],self.argv,env)
             except BaseException: os.write(2,b"S9_EXEC_FAILURE\n"); os._exit(127)
-        os.close(self.slave); os.close(self.ew); _winsize(self.master,self.geometry); os.set_blocking(self.master,False); os.set_blocking(self.er,False); self.t0=time.monotonic(); self.spawn_at=0.0; self.root_pid=self.pid; self.pgid=self.pid; self.original_pgid=self.pid; self.identity=self._ps()
+        os.close(self.slave); os.close(self.ew); self.parent_start_wall=time.monotonic(); _winsize(self.master,self.geometry); os.set_blocking(self.master,False); os.set_blocking(self.er,False); self.t0=time.monotonic(); self.spawn_at=0.0; self.root_pid=self.pid; self.pgid=self.pid; self.original_pgid=self.pid
+        if preflight:
+            probe_started=time.monotonic(); self.identity_probe_started_ms=(probe_started-self.t0)*1000; self.identity=self._ps(); self.identity_probe_finished_ms=(time.monotonic()-self.t0)*1000; self.identity_probe_ms=self.identity_probe_finished_ms-self.identity_probe_started_ms
+        else:
+            self.identity={"verified":False,"deferred":True}; self.identity_probe_started_ms=None; self.identity_probe_finished_ms=None; self.identity_probe_ms=0.0
     def _ps(self):
         try:
             row=subprocess.check_output(["ps","-p",str(self.pid),"-o","pid=,ppid=,comm=,args="],text=True,stderr=subprocess.DEVNULL).strip(); tokens=shlex.split(row.split(None,3)[3]) if row and len(row.split(None,3))==4 else []
@@ -722,11 +728,20 @@ def _comparator_attempt_status(attempt, expected_argv):
     return "PASS" if lifecycle else "INCONCLUSIVE"
 
 def _phase2_rep(profile,large,root,run_id,index):
-    home=Path(tempfile.mkdtemp(prefix="s9-p2-home-")); copy=Path(large); s=Session([profile["root"],str(copy)],timeout=8); s.spawn(home,home); expected=[str(profile["root"]),str(copy)]; probe=process_group(s.original_pgid); ok,members,error=probe; identity=exact_group_identity(probe,expected,[profile["helper"]] if profile["helper"] else None); rss=[_rss_snapshot(s.original_pgid,members)]; ready=s.until(lambda sc:sc.alt and sc.contains(copy.name) and sc.contains("S9_C1_ROW_000000"),"c1_ready"); s.readiness=ready; rss.append(_rss_snapshot(s.original_pgid,process_group(s.original_pgid)[1])); quiet=s.quiet() if ready.get("matched") else False; clean=s.close(); valid=bool(ready.get("matched")) and quiet and clean and ok and identity[0] and s.drain_complete and not s.pgid_after and not s.descendants and not s.timed_out and not s.output_capped and not s.stderr_capped and not s.screen.unsupported; elapsed=ready.get("matched_at") if ready.get("matched") else None
-    rec={"profile":profile["root"].split("/")[-2],"rep":index,"status":"PASS" if valid else "INCONCLUSIVE","elapsed_ms":elapsed*1000 if elapsed is not None else None,"identity":identity[0],"rss_samples":rss,"rss_peak_bytes":max((x["rss_bytes"] for x in rss),default=0),"process":s.record()}; p=Path(root)/(rec["profile"]+f"-c1-{index}.json"); p.write_text(json.dumps(rec,sort_keys=True,indent=2)+"\n"); rec["artifact"]=_phase2_file(p,REPO); shutil.rmtree(home,ignore_errors=True); return rec
+    home=Path(tempfile.mkdtemp(prefix="s9-p2-home-")); copy=Path(large); s=Session([profile["root"],str(copy)],timeout=8); s.spawn(home,home,preflight=False); expected=[str(profile["root"]),str(copy)]
+    ready=s.until(lambda sc:sc.alt and sc.contains(copy.name) and sc.contains("S9_C1_ROW_000000"),"c1_ready"); s.readiness=ready
+    observer_boundary_ms=ready.get("matched_at")*1000 if ready.get("matched") else None
+    if ready.get("matched"):
+        identity_started=time.monotonic(); identity=s._ps(); identity_finished=time.monotonic(); s.identity=identity; s.identity_probe_started_ms=(identity_started-s.t0)*1000; s.identity_probe_finished_ms=(identity_finished-s.t0)*1000; s.identity_probe_ms=s.identity_probe_finished_ms-s.identity_probe_started_ms
+        group_started=time.monotonic(); ok,members,error=process_group(s.original_pgid); group_finished=time.monotonic(); s.pgid_before=list(members); s.pgid_before_probe_error=error; s.group_probe_started_ms=(group_started-s.t0)*1000; s.group_probe_finished_ms=(group_finished-s.t0)*1000; s.group_probe_ms=s.group_probe_finished_ms-s.group_probe_started_ms
+    else:
+        identity={"verified":False,"deferred":True}; s.identity=identity; s.identity_probe_started_ms=s.identity_probe_finished_ms=s.identity_probe_ms=None; ok,members,error=False,[],"readiness endpoint missing"; s.pgid_before_probe_error=error; s.group_probe_started_ms=s.group_probe_finished_ms=s.group_probe_ms=None
+    identity_result=exact_group_identity((ok,members,error),expected,[profile["helper"]] if profile["helper"] else None); rss=[_rss_snapshot(s.original_pgid,members),_rss_snapshot(s.original_pgid,members)]; quiet=s.quiet() if ready.get("matched") else False; clean=s.close(); valid=bool(ready.get("matched")) and quiet and clean and ok and identity_result[0] and s.drain_complete and not s.pgid_after and not s.descendants and not s.timed_out and not s.output_capped and not s.screen.unsupported; elapsed=ready.get("matched_at") if ready.get("matched") else None
+    rec={"profile":profile["root"].split("/")[-2],"rep":index,"status":"PASS" if valid else "INCONCLUSIVE","elapsed_ms":elapsed*1000 if elapsed is not None else None,"identity":identity_result[0],"observer_boundary":PHASE2_METHODOLOGY,"observer_boundary_ms":observer_boundary_ms,"identity_probe":{"started_ms":s.identity_probe_started_ms,"finished_ms":s.identity_probe_finished_ms,"duration_ms":s.identity_probe_ms,"verified":identity.get("verified") is True},"process_group_probe":{"started_ms":s.group_probe_started_ms,"finished_ms":s.group_probe_finished_ms,"duration_ms":s.group_probe_ms,"success":ok,"identity":list(identity_result)},"rss_samples":rss,"rss_peak_bytes":max((x["rss_bytes"] for x in rss),default=0),"process":s.record()}; p=Path(root)/(rec["profile"]+f"-c1-{index}.json"); p.write_text(json.dumps(rec,sort_keys=True,indent=2)+"\n"); rec["artifact"]=_phase2_file(p,REPO); shutil.rmtree(home,ignore_errors=True); return rec
 
 def validate_phase2_result(x):
     if x.get("schema")!=PHASE2_SCHEMA or x.get("phase")!="phase2": raise ValueError("wrong Phase 2 schema")
+    if x.get("methodology")!=PHASE2_METHODOLOGY or x.get("historical_context")!=PHASE2_HISTORICAL_CONTEXT: raise ValueError("wrong Phase 2 methodology context")
     if set(x.get("claims",{}))!=set("C1 C2 C3 C4 C5".split()): raise ValueError("missing claims")
     allowed={"PASS","FAIL","INCONCLUSIVE","NOT_MEASURED"}
     if any(v.get("status") not in allowed or not v.get("reason") for v in x["claims"].values()): raise ValueError("invalid claim outcome")
@@ -735,9 +750,11 @@ def validate_phase2_result(x):
         p=_check_artifact(e,x["artifact_root"])
         if not p.is_file(): raise ValueError("missing Phase 2 evidence")
     c1=x["claims"]["C1"]
-    if set(c1.get("profiles",{}))!={"bare","shipped"} or any(len(rs)!=5 for rs in c1["profiles"].values()): raise ValueError("C1 repetition matrix mismatch")
+    if c1.get("methodology")!=PHASE2_METHODOLOGY or set(c1.get("profiles",{}))!={"bare","shipped"} or any(len(rs)!=5 for rs in c1["profiles"].values()): raise ValueError("C1 repetition matrix mismatch")
     for rs in c1["profiles"].values():
         for r in rs:
+            boundary=r.get("observer_boundary_ms"); ip=r.get("identity_probe"); gp=r.get("process_group_probe")
+            if r.get("observer_boundary")!=PHASE2_METHODOLOGY or not isinstance(boundary,(int,float)) or r.get("elapsed_ms")!=boundary or not isinstance(ip,dict) or not isinstance(gp,dict) or not isinstance(ip.get("started_ms"),(int,float)) or not isinstance(gp.get("started_ms"),(int,float)) or ip["started_ms"]<boundary or gp["started_ms"]<boundary: raise ValueError("C1 observer boundary violation")
             if r.get("status")=="PASS":
                 p=r.get("process",{})
                 if not r.get("identity") or p.get("exit")!=0 or p.get("signal") is not None or not p.get("reaped") or not p.get("pty_eof") or not p.get("stderr_eof") or not p.get("drain_complete") or p.get("drain_deadline") or p.get("cleanup_error") or p.get("pgid_after") or p.get("descendants_left") or p.get("timed_out") or p.get("pty_output_capped") or p.get("stderr_capped") or p.get("unsupported"): raise ValueError("C1 PASS lifecycle failure")
@@ -746,7 +763,7 @@ def validate_phase2_result(x):
     for profile,rs in c1["profiles"].items():
         for r in rs:
             ap=_check_artifact(r["artifact"],x["artifact_root"]); a=json.loads(ap.read_text())
-            if any(a.get(k)!=r.get(k) for k in ("profile","rep","status","elapsed_ms","identity","process","rss_samples","rss_peak_bytes")): raise ValueError("C1 repetition artifact mismatch")
+            if any(a.get(k)!=r.get(k) for k in ("profile","rep","status","elapsed_ms","identity","observer_boundary","observer_boundary_ms","identity_probe","process_group_probe","process","rss_samples","rss_peak_bytes")): raise ValueError("C1 repetition artifact mismatch")
             c1_artifacts.append(a)
     derived={p:phase2_quantiles([a["elapsed_ms"] for a in c1_artifacts if a["profile"]==p and a.get("status")=="PASS"]) for p in c1["profiles"]}
     if c1.get("quantiles_ms")!=derived: raise ValueError("C1 forged quantiles")
@@ -850,8 +867,8 @@ def validate_phase2_result(x):
     return True
 
 def phase2_report_markdown(result):
-    c=result["claims"]; runtime=result["profiles"]["bare"]["files"]["teddy"]["version_capture"]; lines=["# S9 Phase 2 benchmark results","","## Executive summary",f"Run: `{result['command']}`",f"Source: `{result['source']['commit']}` (dirty: `{result['source']['dirty']}`)",f"Cargo package: `{result['cargo_package_version']}`",f"Runtime `teddy --version`: `{runtime['stdout'].strip()}` (exit `{runtime['exit']}`)",f"Artifact bundle: `{result['artifact_root']['path']}`","","## Claim summary","","| Claim | Status | Criterion / limitation | Evidence |","|---|---|---|---|"]
-    criteria={"C1":"p95 < 50 ms for both profiles","C2":"action-associated perf p95 < 1000 us","C3":"observable literal search and cancellation","C4":"source unchanged and X+original digest","C5":"report-only RSS; no budget"}
+    c=result["claims"]; runtime=result["profiles"]["bare"]["files"]["teddy"]["version_capture"]; lines=["# S9 Phase 2 benchmark results","","## Methodology context",f"- Methodology: `{result['methodology']}`; C1 identity/PGID observation is deferred until after the named readiness sentinel.",f"- Historical context: {result['historical_context']}","- C1 elapsed time starts at the post-fork harness clock; it is not complete process-launch latency.","","## Executive summary",f"Run: `{result['command']}`",f"Source: `{result['source']['commit']}` (dirty: `{result['source']['dirty']}`)",f"Cargo package: `{result['cargo_package_version']}`",f"Runtime `teddy --version`: `{runtime['stdout'].strip()}` (exit `{runtime['exit']}`)",f"Artifact bundle: `{result['artifact_root']['path']}`","","## Claim summary","","| Claim | Status | Criterion / limitation | Evidence |","|---|---|---|---|"]
+    criteria={"C1":"p95 < 50 ms for both profiles; post-readiness observer boundary","C2":"action-associated perf p95 < 1000 us","C3":"observable literal search and cancellation","C4":"source unchanged and X+original digest","C5":"report-only RSS; no budget"}
     for k in "C1 C2 C3 C4 C5".split():
         evidence=c[k].get("evidence") or ("C1 repetition artifacts" if k=="C1" else "fixture evidence" if k=="C4" else "runtime attempt artifacts")
         ep=evidence if isinstance(evidence,str) else (evidence.get("path") if isinstance(evidence,dict) else "runtime artifacts")
@@ -873,7 +890,7 @@ def phase2_report_markdown(result):
         elif name=="less": caveat="less is a demand-driven pager; editor runtime/config differs; open-screen only, not a teddy claim"
         else: caveat="editor runtime/config differs from teddy; open-screen observation only, not a teddy claim"
         lines.append(f"| {name} | {r.get('status','-')} | `{r.get('path','unavailable')}` | `{r.get('invocation_class','-')}` | {metric} | {caveat} |")
-    lines += ["","## Reproducibility","",f"- Command: `{result['command']}`",f"- Bundle: `{result['artifact_root']['path']}`",f"- Geometry: `{result['geometry'][0]}x{result['geometry'][1]}`; repetitions `{result['repetitions']}`; quiescence `{result['quiescence_ms']} ms`",f"- Environment: `{len(result['environment'])}` sanitized variables; host `{result['host']['os']}`, kernel `{result['host']['kernel']}`, arch `{result['host']['arch']}`", "- Evidence paths and SHA-256 values are recorded in the canonical JSON and remain immutable.","","## Limitations","","- PTY evidence measures application emission/transport and terminal-model screens, not physical rendering.","- C1 uses warm-cache runs without cache purge.","- C2/C3 remain INCONCLUSIVE where action semantics cannot be established; C5 has no performance budget."]
+    lines += ["","## Reproducibility","",f"- Command: `{result['command']}`",f"- Bundle: `{result['artifact_root']['path']}`",f"- Geometry: `{result['geometry'][0]}x{result['geometry'][1]}`; repetitions `{result['repetitions']}`; quiescence `{result['quiescence_ms']} ms`",f"- Environment: `{len(result['environment'])}` sanitized variables; host `{result['host']['os']}`, kernel `{result['host']['kernel']}`, arch `{result['host']['arch']}`", "- Evidence paths and SHA-256 values are recorded in the canonical JSON and remain immutable.","","## Limitations","","- PTY evidence measures application emission/transport and terminal-model screens, not physical rendering.","- C1 uses warm-cache runs without cache purge; identity/PGID probes are post-readiness and elapsed time is not complete process-launch latency.","- C2/C3 remain INCONCLUSIVE where action semantics cannot be established; C5 has no performance budget."]
     if len(lines)>250: raise ValueError("Phase 2 report exceeds reviewable line bound")
     return "\n".join(lines)+"\n"
 
@@ -895,6 +912,110 @@ def validate_phase2_report(result,text):
         if heading not in text: raise ValueError("report required section missing")
     return True
 
+def c1_attribution_plan():
+    return [(block,mode,rep) for block,order in ((1,("current","deferred")),(2,("deferred","current"))) for rep in range(1,32) for mode in order]
+
+def c1_attribution_criterion(current,deferred,removed_probe_ms):
+    cp=phase2_quantiles(current)["p95"]; dp=phase2_quantiles(deferred)["p95"]; improvement=cp-dp if cp is not None and dp is not None else None
+    paired=statistics.median([a-b for a,b in zip(current,deferred)]) if current and deferred else None
+    agrees=removed_probe_ms>0 and paired is not None and abs(paired-removed_probe_ms)/removed_probe_ms<=.20
+    return {"current_p95_ms":cp,"deferred_p95_ms":dp,"improvement_ms":improvement,"paired_reduction_ms":paired,"removed_probe_ms":removed_probe_ms,"criterion":bool(improvement is not None and improvement>=5 and agrees),"classification":"OBSERVER_CONTAMINATION" if improvement is not None and improvement>=5 and agrees else "NO_REPRODUCIBLE_OBSERVER_CONTAMINATION"}
+
+def _c1_attribution_sample(binary,corpus,mode,root,rep,block=None,profile=None,helper=None):
+    home=Path(tempfile.mkdtemp(prefix="s9-c1-attribution-")); argv=[str(binary),str(corpus)]; s=Session(argv,timeout=8,geometry=(200,50)); fork_wall=time.monotonic(); s.spawn(home,home,preflight=mode=="current"); parent_start_ms=(s.parent_start_wall-fork_wall)*1000
+    identity_result=s.identity if mode=="current" else None; identity_ms=s.identity_probe_ms if mode=="current" else None; group_ok=group_rows=group_error=group_ms=None; group_started_ms=group_finished_ms=None
+    if mode=="current":
+        started=time.monotonic(); group_started_ms=(started-s.t0)*1000; group_ok,group_rows,group_error=process_group(s.original_pgid); group_finished_ms=(time.monotonic()-s.t0)*1000; group_ms=group_finished_ms-group_started_ms
+    ready=s.until(lambda sc:sc.contains("S9_C1_ROW_000000"),"c1_attribution_ready");
+    if mode=="deferred":
+        started=time.monotonic(); identity_started_ms=(started-s.t0)*1000; identity_result=s._ps(); identity_finished_ms=(time.monotonic()-s.t0)*1000; identity_ms=identity_finished_ms-identity_started_ms; started=time.monotonic(); group_started_ms=(started-s.t0)*1000; group_ok,group_rows,group_error=process_group(s.original_pgid); group_finished_ms=(time.monotonic()-s.t0)*1000; group_ms=group_finished_ms-group_started_ms; s.identity=identity_result
+    else: identity_started_ms=s.identity_probe_started_ms; identity_finished_ms=s.identity_probe_finished_ms
+    readiness={"matched":ready.get("matched"),"name":ready.get("name"),"matched_at":ready.get("matched_at"),"snapshot":ready.get("snapshot")}
+    expected_root=[argv[0],argv[1]]; expected_helper=[helper] if helper else None; group_identity=exact_group_identity((group_ok,group_rows,group_error),expected_root,expected_helper)
+    probes={"identity":{"result":identity_result,"verified":bool(identity_result and identity_result.get("verified")),"error":identity_result.get("error") if isinstance(identity_result,dict) else "probe did not run","duration_ms":identity_ms,"started_ms":identity_started_ms,"finished_ms":identity_finished_ms},"process_group":{"success":group_ok,"rows":group_rows,"error":group_error,"duration_ms":group_ms,"started_ms":group_started_ms,"finished_ms":group_finished_ms,"identity":group_identity}}
+    clean=s.close(); process=s.record(); identity_ok=bool(identity_result and identity_result.get("verified") and identity_result.get("argv")==argv); probe_ok=bool(probes["identity"]["verified"] and probes["identity"]["error"] is None and group_identity[0]); lifecycle=clean and process.get("exit")==0 and process.get("signal") is None and process.get("reaped") and process.get("pty_eof") and process.get("stderr_eof") and process.get("drain_complete") and not process.get("drain_deadline") and not process.get("timed_out") and not process.get("pty_output_capped") and not process.get("stderr_capped") and not process.get("unsupported") and not process.get("exec_failed") and not process.get("cleanup_error") and not process.get("pgid_after") and not process.get("descendants_left") and not process.get("pgid_probe_error") and not process.get("pgid_before_probe_error") and not process.get("pgid_after_probe_error"); valid=bool(ready.get("matched") and identity_ok and probe_ok and lifecycle and readiness["snapshot"] and any("S9_C1_ROW_000000" in line for line in readiness["snapshot"]))
+    reason="valid paired attribution sample" if valid else "invalid readiness/identity/probe/lifecycle evidence"
+    return {"block":block,"profile":profile,"mode":mode,"rep":rep,"status":"PASS" if valid else "INCONCLUSIVE","valid":valid,"validity_reason":reason,"argv":argv,"parent_start_ms":parent_start_ms,"probes":probes,"first_output_ms":s.first_output*1000 if s.first_output is not None else None,"readiness_ms":readiness["matched_at"]*1000 if readiness["matched_at"] is not None else None,"readiness":readiness,"identity":s.identity,"group_identity":group_identity,"process":process}
+
+def _c1_attribution_samples_by_rep(samples,profile,mode):
+    selected=[s for s in samples if s.get("profile")==profile and s.get("mode")==mode]
+    keys=[(s.get("block"),s.get("rep")) for s in selected]; expected={(b,r) for b in (1,2) for r in range(1,32)}
+    if len(selected)!=62 or set(keys)!=expected or len(set(keys))!=62: raise ValueError("C1 attribution block/rep matrix mismatch")
+    return {(s["block"],s["rep"]):s for s in selected}
+
+def _c1_attribution_summary(samples,profile):
+    current=_c1_attribution_samples_by_rep(samples,profile,"current"); deferred=_c1_attribution_samples_by_rep(samples,profile,"deferred")
+    invalid=[s for s in list(current.values())+list(deferred.values()) if s.get("status")!="PASS" or not s.get("valid")]
+    if invalid:
+        bad={"current_p95_ms":None,"deferred_p95_ms":None,"improvement_ms":None,"paired_reduction_ms":None,"removed_probe_ms":None,"criterion":False,"classification":"NO_REPRODUCIBLE_OBSERVER_CONTAMINATION","valid":False,"validity_reason":"invalid required sample: "+invalid[0].get("validity_reason","unspecified")}
+        return {"blocks":{"1":bad,"2":bad},"aggregate":bad}
+    blocks={}
+    for block in (1,2):
+        keys=[(block,r) for r in range(1,32)]; cv=[current[k]["readiness_ms"] for k in keys]; dv=[deferred[k]["readiness_ms"] for k in keys]; removed=statistics.median([current[k]["probes"]["identity"]["duration_ms"]+current[k]["probes"]["process_group"]["duration_ms"] for k in keys]); paired=statistics.median([a-b for a,b in zip(cv,dv)]); result=c1_attribution_criterion(cv,dv,removed); result.update({"valid":True,"validity_reason":"all required paired block/rep samples valid","paired_reduction_ms":paired,"removed_probe_ms":removed}); blocks[str(block)]=result
+    keys=sorted(current); cv=[current[k]["readiness_ms"] for k in keys]; dv=[deferred[k]["readiness_ms"] for k in keys]; removed=statistics.median([current[k]["probes"]["identity"]["duration_ms"]+current[k]["probes"]["process_group"]["duration_ms"] for k in keys]); paired=statistics.median([a-b for a,b in zip(cv,dv)]); aggregate=c1_attribution_criterion(cv,dv,removed); aggregate.update({"valid":True,"validity_reason":"all required paired block/rep samples valid","paired_reduction_ms":paired,"removed_probe_ms":removed}); return {"blocks":blocks,"aggregate":aggregate}
+
+def validate_c1_attribution_report(report):
+    if not isinstance(report,dict) or report.get("schema")!="teddy-s9-c1-attribution-1" or report.get("diagnostic")!="c1-attribution": raise ValueError("invalid C1 attribution schema")
+    root=report.get("artifact_root",{}).get("path"); p=Path(root) if isinstance(root,str) else None
+    if p is None or p.is_absolute() or ".." in p.parts or not root.startswith("bench/artifacts/"): raise ValueError("unsafe attribution artifact root")
+    if report.get("geometry")!=[200,50] or report.get("corpus",{}).get("size")!=1<<30 or not report.get("corpus",{}).get("path"): raise ValueError("invalid attribution geometry/corpus")
+    root_path=Path(root); source=report.get("source",{}); if_source=source.get("commit") if isinstance(source,dict) else None
+    if not isinstance(if_source,str) or not isinstance(source.get("dirty"),bool): raise ValueError("missing attribution provenance")
+    corpus=report["corpus"]; corpus_path=_artifact_path({"path":corpus["path"],"sha256":corpus.get("sha256")}, {"path":root})
+    if not corpus_path.is_file() or sha(corpus_path)[0]!=corpus.get("sha256") or corpus_path.stat().st_size!=1<<30: raise ValueError("invalid attribution corpus provenance")
+    provenance=report.get("profile_provenance")
+    if not isinstance(provenance,dict) or set(provenance)!={"bare","shipped"}: raise ValueError("missing staged profile provenance")
+    for profile,info in provenance.items():
+        expected_files={"teddy"} if profile=="bare" else {"teddy","teddy-highlight"}
+        if set(info.get("files",{}))!=expected_files or set(info.get("exact_files",[]))!=expected_files: raise ValueError("invalid staged profile file matrix")
+        for name,meta in info["files"].items():
+            fp=Path(meta.get("path",""));
+            try: fp.resolve().relative_to(root_path.resolve())
+            except ValueError: raise ValueError("staged profile escapes artifact root")
+            if not fp.is_file() or sha(fp)[0]!=meta.get("sha256") or fp.stat().st_size!=meta.get("size") or meta.get("path")!=str(fp): raise ValueError("staged profile provenance mismatch")
+    expected_plan=[list(x) for x in c1_attribution_plan()]
+    if report.get("warmups")!=5 or report.get("plan")!=expected_plan: raise ValueError("invalid attribution plan")
+    samples=report.get("samples"); profiles=report.get("profiles")
+    if not isinstance(samples,list) or not isinstance(profiles,dict) or set(profiles)!={"bare","shipped"} or len(samples)!=248: raise ValueError("invalid attribution sample matrix")
+    for s in samples:
+        if s.get("block") not in {1,2} or s.get("rep") not in range(1,32) or s.get("mode") not in {"current","deferred"} or s.get("profile") not in profiles: raise ValueError("invalid attribution sample identity")
+        info=provenance[s["profile"]]; expected_binary=info["files"]["teddy"]["path"]; expected_corpus=str((REPO/corpus["path"]).resolve()) if corpus["path"].startswith("bench/") else str((root_path/corpus["path"]).resolve()); expected_argv=[expected_binary,expected_corpus]
+        if s.get("argv")!=expected_argv or s.get("identity",{}).get("argv")!=expected_argv: raise ValueError("attribution sample provenance mismatch")
+        if not isinstance(s.get("probes"),dict) or not isinstance(s["probes"].get("identity"),dict) or not isinstance(s["probes"].get("process_group"),dict): raise ValueError("missing attribution probe evidence")
+        i,g=s["probes"]["identity"],s["probes"]["process_group"]; pr=s.get("process",{}); identity=i.get("result",{})
+        if not isinstance(identity,dict) or i.get("verified") is not (identity.get("verified") is True) or not isinstance(i.get("duration_ms"),(int,float)) or i.get("error") is not None or g.get("success") is not True or g.get("error") is not None or not isinstance(g.get("rows"),list) or not isinstance(g.get("duration_ms"),(int,float)): raise ValueError("invalid attribution probe evidence")
+        if s.get("identity")!=identity or identity.get("argv")!=s.get("argv") or not isinstance(s.get("argv"),list) or len(s["argv"])!=2: raise ValueError("attribution identity argv mismatch")
+        readiness=s.get("readiness")
+        if not isinstance(readiness,dict) or readiness.get("matched") is not True or readiness.get("name")!="c1_attribution_ready" or not isinstance(readiness.get("snapshot"),list) or not any("S9_C1_ROW_000000" in line for line in readiness["snapshot"] if isinstance(line,str)) or readiness.get("matched_at")*1000!=s.get("readiness_ms"): raise ValueError("invalid attribution readiness evidence")
+        if not isinstance(s.get("first_output_ms"),(int,float)) or s["first_output_ms"]>s["readiness_ms"]: raise ValueError("invalid attribution output ordering")
+        for key in ("identity","process_group"):
+            probe=s["probes"][key];
+            if not isinstance(probe.get("started_ms"),(int,float)) or not isinstance(probe.get("finished_ms"),(int,float)) or probe["finished_ms"]<probe["started_ms"]: raise ValueError("invalid attribution probe timing")
+            if s["mode"]=="current" and probe["finished_ms"]>s["first_output_ms"]: raise ValueError("current probe did not precede PTY drain")
+            if s["mode"]=="deferred" and probe["started_ms"]<s["readiness_ms"]: raise ValueError("deferred probe preceded readiness")
+        expected_helper=info.get("helper") if s["profile"]=="shipped" else None; expected_group=expected_argv; group=s["probes"]["process_group"]; derived_group=exact_group_identity((group.get("success"),group.get("rows"),group.get("error")),expected_group,[expected_helper] if expected_helper else None)
+        stored_group=tuple(s.get("group_identity")) if isinstance(s.get("group_identity"),list) else s.get("group_identity")
+        if not isinstance(stored_group,tuple) or len(stored_group)!=2 or stored_group[0] is not derived_group[0] or stored_group[1]!=derived_group[1] or derived_group[0] is not True: raise ValueError("attribution process group identity mismatch")
+        if s.get("status") not in {"PASS","INCONCLUSIVE"}: raise ValueError("invalid attribution sample status")
+        valid=bool(s.get("status")=="PASS" and s.get("valid") is True and s.get("readiness_ms") is not None and identity.get("verified") is True and pr.get("exit")==0 and pr.get("signal") is None and pr.get("reaped") and pr.get("pty_eof") and pr.get("stderr_eof") and pr.get("drain_complete") and not pr.get("drain_deadline") and not pr.get("timed_out") and not pr.get("pty_output_capped") and not pr.get("stderr_capped") and not pr.get("unsupported") and not pr.get("exec_failed") and not pr.get("cleanup_error") and not pr.get("pgid_after") and not pr.get("descendants_left") and not pr.get("pgid_probe_error") and not pr.get("pgid_before_probe_error") and not pr.get("pgid_after_probe_error"));
+        if valid is not (s.get("status")=="PASS"): raise ValueError("attribution status/lifecycle mismatch")
+    for profile in profiles:
+        derived=_c1_attribution_summary(samples,profile)
+        if profiles[profile]!=derived: raise ValueError("attribution profile arithmetic/classification mismatch")
+    expected="OBSERVER_CONTAMINATION" if all(v.get("aggregate",{}).get("classification")=="OBSERVER_CONTAMINATION" and all(b.get("classification")=="OBSERVER_CONTAMINATION" for b in v.get("blocks",{}).values()) for v in profiles.values()) else "NO_REPRODUCIBLE_OBSERVER_CONTAMINATION"
+    if report.get("classification")!=expected: raise ValueError("attribution top-level classification mismatch")
+    return True
+
+def c1_attribution(a):
+    if not a.allow_large: raise ValueError("C1 attribution requires --allow-large")
+    run=ROOT/"artifacts"/("c1-attribution-"+time.strftime("%Y%m%dT%H%M%SZ",time.gmtime())+"-"+uuid.uuid4().hex[:10]); run.mkdir(parents=True); build=run/"build-target"; subprocess.check_call(["cargo","build","--release","--target-dir",str(build)],cwd=REPO); built=build/"release"; profiles=_phase2_profiles(run/"profiles",built); corpus=run/"corpus"/"s9-1g.log"; generate_phase2_log(corpus); warmups=5; samples=[]; plan=c1_attribution_plan()
+    for profile,p in profiles.items():
+        for mode in ("current","deferred"):
+            for i in range(1,warmups+1): _c1_attribution_sample(p["root"],corpus,mode,run,i)
+        for block,mode,i in plan: samples.append(_c1_attribution_sample(p["root"],corpus,mode,run,i,block,profile,p.get("helper")))
+    summary={profile:_c1_attribution_summary(samples,profile) for profile in profiles}
+    source={"commit":subprocess.check_output(["git","rev-parse","HEAD"],cwd=REPO,text=True).strip(),"dirty":bool(subprocess.check_output(["git","status","--porcelain"],cwd=REPO))}; profile_provenance={p:{"root":v["root"],"helper":v["helper"],"files":v["files"],"exact_files":v["exact_files"]} for p,v in profiles.items()}; corpus_meta={"path":str(corpus.relative_to(REPO)),"size":corpus.stat().st_size,"sha256":sha(corpus)[0]}; report={"schema":"teddy-s9-c1-attribution-1","diagnostic":"c1-attribution","artifact_root":{"path":str(run.relative_to(REPO))},"geometry":[200,50],"source":source,"profile_provenance":profile_provenance,"corpus":corpus_meta,"warmups":warmups,"plan":[list(x) for x in plan],"profiles":summary,"samples":samples,"classification":"OBSERVER_CONTAMINATION" if all(v["aggregate"]["classification"]=="OBSERVER_CONTAMINATION" and all(b["classification"]=="OBSERVER_CONTAMINATION" for b in v["blocks"].values()) for v in summary.values()) else "NO_REPRODUCIBLE_OBSERVER_CONTAMINATION","claim":"methodology attribution only; no editor performance claim"}; validate_c1_attribution_report(report); (run/"report.json").write_text(json.dumps(report,indent=2,sort_keys=True)+"\n"); print(json.dumps(report,indent=2,sort_keys=True))
+
 def full(a):
     if not a.allow_large: raise ValueError("Phase 2 requires --allow-large")
     run=ROOT/"artifacts"/("phase2-"+time.strftime("%Y%m%dT%H%M%SZ",time.gmtime())+"-"+uuid.uuid4().hex[:10]); run.mkdir(parents=True); (run/"c1").mkdir(); label=str(run.relative_to(REPO)); build=run/"build-target"; subprocess.check_call(["cargo","build","--release","--target-dir",str(build)],cwd=REPO); built=build/"release"; profiles=_phase2_profiles(run/"profiles",built); large=run/"corpus"/"s9-1g.log"; manifest=generate_phase2_log(large); large_meta=_phase2_file(large,REPO); reps={p:[_phase2_rep(v,large,run/"c1",run.name,i) for i in range(1,6)] for p,v in profiles.items()}; c1q={p:phase2_quantiles([r["elapsed_ms"] for r in rs if r["elapsed_ms"] is not None]) for p,rs in reps.items()}; c1_valid=all(all(r["status"]=="PASS" for r in rs) for rs in reps.values()); c1status="PASS" if c1_valid and all(c1q[p]["p95"]<50 for p in reps) else ("FAIL" if c1_valid else "INCONCLUSIVE")
@@ -912,7 +1033,7 @@ def full(a):
         attempt,ev=_c3_attempt(p,large,run); c3_attempts.append(attempt); c3_evidence.append(ev)
     rss_samples=[{"profile":p,"rep":r["rep"],"samples":r["rss_samples"],"peak_bytes":r["rss_peak_bytes"]} for p,rs in reps.items() for r in rs]; rss_path=run/"c5-rss.json"; rss_path.write_text(json.dumps({"samples":rss_samples,"status":"NOT_MEASURED","reason":"RSS samples are diagnostic only"},sort_keys=True)+"\n"); rss_evidence=_phase2_file(rss_path,REPO)
     comparators=discover_comparators(); comparator_records,comparator_evidence=run_comparators(comparators,large,run); evidence=[large_meta]+[r["artifact"] for rs in reps.values() for r in rs]+c2_evidence+c3_evidence+[rss_evidence]+c4_evidence+comparator_evidence
-    result={"schema":PHASE2_SCHEMA,"phase":"phase2","command":"python3 bench/bench.py full --allow-large","artifact_root":{"path":label,"resolvable_from":"repository root"},"source":{"commit":subprocess.check_output(["git","rev-parse","HEAD"],cwd=REPO,text=True).strip(),"dirty":bool(subprocess.check_output(["git","status","--porcelain"],cwd=REPO))},"cargo_package_version":json.loads(subprocess.check_output(["cargo","metadata","--no-deps","--format-version","1"],cwd=REPO,text=True))["packages"][0]["version"],"profiles":{p:{"files":v["files"],"exact_files":v["exact_files"]} for p,v in profiles.items()},"environment":phase2_environment(),"host":{"os":platform.platform(),"kernel":platform.release(),"arch":platform.machine(),"cpu":os.cpu_count(),"free_bytes":shutil.disk_usage(REPO).free},"geometry":[200,50],"repetitions":5,"quiescence_ms":5,"corpus":{"manifest":manifest,"evidence":large_meta},"claims":{"C1":{"status":c1status,"reason":"validated teddy-only warm PTY repetitions; predeclared p95 threshold is 50ms","profiles":reps,"quantiles_ms":c1q},"C2":{"status":c2_status,"reason":"runtime perf PTY attempt; action association is required for PASS","attempts":c2_attempts,"quantiles_us":phase2_quantiles([r["us"] for r in c2_rows])},"C3":{"status":"INCONCLUSIVE","reason":"real literal-search/cancellation PTY attempts retained; UI action association is not established","attempts":c3_attempts,"evidence":c3_evidence},"C4":{"status":"PASS" if all(x["status"]=="PASS" for x in c4) else "FAIL","reason":"isolated teddy integration and declared fixture digest verification","fixtures":c4},"C5":{"status":"NOT_MEASURED","reason":"RSS samples are diagnostic only; no performance budget","samples":rss_samples,"evidence":rss_evidence}},"comparators":{"status":"DISCOVERED","tools":comparators,"records":comparator_records},"evidence":evidence,"limitations":["PTY records application emission/transport, not physical rendering","warm cache/no purge","rendered screens are terminal-model evidence","renderer diagnostic remains a known observed failure"]}; validate_phase2_result(result); (REPO/"bench/results").mkdir(parents=True,exist_ok=True); (REPO/"bench/results/canonical.json").write_text(json.dumps(result,indent=2,sort_keys=True)+"\n"); validate_phase2_result(result); render_phase2_report(result); validate_phase2_report(result,(REPO/"docs/bench_results.md").read_text()); print(json.dumps(result,indent=2,sort_keys=True))
+    result={"schema":PHASE2_SCHEMA,"phase":"phase2","methodology":PHASE2_METHODOLOGY,"historical_context":PHASE2_HISTORICAL_CONTEXT,"command":"python3 bench/bench.py full --allow-large","artifact_root":{"path":label,"resolvable_from":"repository root"},"source":{"commit":subprocess.check_output(["git","rev-parse","HEAD"],cwd=REPO,text=True).strip(),"dirty":bool(subprocess.check_output(["git","status","--porcelain"],cwd=REPO))},"cargo_package_version":json.loads(subprocess.check_output(["cargo","metadata","--no-deps","--format-version","1"],cwd=REPO,text=True))["packages"][0]["version"],"profiles":{p:{"files":v["files"],"exact_files":v["exact_files"]} for p,v in profiles.items()},"environment":phase2_environment(),"host":{"os":platform.platform(),"kernel":platform.release(),"arch":platform.machine(),"cpu":os.cpu_count(),"free_bytes":shutil.disk_usage(REPO).free},"geometry":[200,50],"repetitions":5,"quiescence_ms":5,"corpus":{"manifest":manifest,"evidence":large_meta},"claims":{"C1":{"methodology":PHASE2_METHODOLOGY,"status":c1status,"reason":"validated teddy-only warm PTY repetitions; predeclared p95 threshold is 50ms","profiles":reps,"quantiles_ms":c1q},"C2":{"status":c2_status,"reason":"runtime perf PTY attempt; action association is required for PASS","attempts":c2_attempts,"quantiles_us":phase2_quantiles([r["us"] for r in c2_rows])},"C3":{"status":"INCONCLUSIVE","reason":"real literal-search/cancellation PTY attempts retained; UI action association is not established","attempts":c3_attempts,"evidence":c3_evidence},"C4":{"status":"PASS" if all(x["status"]=="PASS" for x in c4) else "FAIL","reason":"isolated teddy integration and declared fixture digest verification","fixtures":c4},"C5":{"status":"NOT_MEASURED","reason":"RSS samples are diagnostic only; no performance budget","samples":rss_samples,"evidence":rss_evidence}},"comparators":{"status":"DISCOVERED","tools":comparators,"records":comparator_records},"evidence":evidence,"limitations":["PTY records application emission/transport, not physical rendering","warm cache/no purge","rendered screens are terminal-model evidence","renderer diagnostic remains a known observed failure"]}; validate_phase2_result(result); (REPO/"bench/results").mkdir(parents=True,exist_ok=True); (REPO/"bench/results/canonical.json").write_text(json.dumps(result,indent=2,sort_keys=True)+"\n"); validate_phase2_result(result); render_phase2_report(result); validate_phase2_report(result,(REPO/"docs/bench_results.md").read_text()); print(json.dumps(result,indent=2,sort_keys=True))
 
 def helper(a):
     if a.mode=="ansi": print("\033[?25l\033[?1049h\033[2J\033[1;1Hraw helper\033[2K\033[?1049l\033[?25h")
@@ -921,5 +1042,5 @@ def helper(a):
 def tests():
     if not unittest.TextTestRunner(verbosity=1).run(unittest.defaultTestLoader.discover(str(ROOT/"tests"))).wasSuccessful(): raise SystemExit(1)
 def main(argv=None):
-    p=argparse.ArgumentParser(); s=p.add_subparsers(dest="cmd",required=True); g=s.add_parser("generate");g.add_argument("-o","--output",default=str(ROOT/"corpus"));g.set_defaults(fn=lambda a:print(json.dumps(generate(a.output),indent=2,sort_keys=True))); q=s.add_parser("smoke");q.add_argument("--corpus",default=str(ROOT/"corpus"));q.add_argument("--timeout",type=float,default=4);q.add_argument("-o","--output");q.add_argument("--artifact-root");q.set_defaults(fn=smoke); f=s.add_parser("full");f.add_argument("--allow-large",action="store_true");f.set_defaults(fn=full); r=s.add_parser("report");r.add_argument("input");r.add_argument("-o","--output");r.set_defaults(fn=report); t=s.add_parser("test");t.set_defaults(fn=lambda a:tests()); h=s.add_parser("helper");h.add_argument("mode",choices=("ansi","sleep","echo"),nargs="?",default="echo");h.add_argument("--seconds",type=float,default=.1);h.set_defaults(fn=helper); a=p.parse_args(argv); a.fn(a)
+    p=argparse.ArgumentParser(); s=p.add_subparsers(dest="cmd",required=True); g=s.add_parser("generate");g.add_argument("-o","--output",default=str(ROOT/"corpus"));g.set_defaults(fn=lambda a:print(json.dumps(generate(a.output),indent=2,sort_keys=True))); q=s.add_parser("smoke");q.add_argument("--corpus",default=str(ROOT/"corpus"));q.add_argument("--timeout",type=float,default=4);q.add_argument("-o","--output");q.add_argument("--artifact-root");q.set_defaults(fn=smoke); f=s.add_parser("full");f.add_argument("--allow-large",action="store_true");f.set_defaults(fn=full); d=s.add_parser("c1-attribution");d.add_argument("--allow-large",action="store_true");d.set_defaults(fn=c1_attribution); r=s.add_parser("report");r.add_argument("input");r.add_argument("-o","--output");r.set_defaults(fn=report); t=s.add_parser("test");t.set_defaults(fn=lambda a:tests()); h=s.add_parser("helper");h.add_argument("mode",choices=("ansi","sleep","echo"),nargs="?",default="echo");h.add_argument("--seconds",type=float,default=.1);h.set_defaults(fn=helper); a=p.parse_args(argv); a.fn(a)
 if __name__=="__main__": main()

@@ -105,10 +105,11 @@ budget is claimed. Comparator discovery records individual identities and
 explicitly rejects `/usr/bin/vis`. PTY timestamps describe application
 emission/transport and terminal-model screens, not physical rendering.
 
-The current canonical run reports C1 `FAIL` when all repetitions are valid but
-either profile reaches or exceeds the 50 ms p95 threshold; this is a measured
-failure, not an inconclusive harness result. Any invalid repetition instead
-derives C1 `INCONCLUSIVE`, regardless of the stored claim status. C3 requires
+The historical pre-drain canonical run reported C1 `FAIL` because a valid
+profile reached or exceeded the 50 ms p95 threshold; that failure remains
+immutable historical context. The current post-readiness canonical run is C1
+`PASS`. Under either version, invalid repetitions derive C1 `INCONCLUSIVE`,
+regardless of stored claim status. C3 requires
 Enter-submitted search evidence distinct from the prompt before association can
 be claimed. C4 keeps the actual saved-output bytes and digest for every
 fixture/profile and rehashes each saved artifact, requiring the computed hash,
@@ -139,3 +140,23 @@ rejections rather than presenting them as comparable teddy measurements.
 Kakoune discovery probes `-version`; all seven names are retained exactly once,
 and each record is cross-checked against its discovery path, alias, status,
 invocation class, and argv.
+
+The accepted C1 correction is versioned as `s9-c1-post-readiness-observer-1`.
+Canonical Phase 2 C1 repetitions defer identity and PGID observation until
+after the named `S9_C1_ROW_000000` readiness endpoint. Elapsed time begins at
+the post-fork harness clock and is application-emission/PTY readiness time,
+not complete process-launch latency. Strict staged identity, lifecycle, EOF,
+drain, cleanup, PGID, corpus, and artifact checks remain claim inputs.
+
+The historical canonical C1 `FAIL` result that used pre-drain identity/PGID
+observation remains immutable historical context and is not silently
+overwritten; the corrected canonical JSON uses a new result schema and records
+that context explicitly. The separate ignored `c1-attribution --allow-large`
+diagnostic remains methodology evidence only. It uses unchanged staged teddy
+binaries and the deterministic 1 GiB corpus, with current pre-drain probes
+compared against deferred post-readiness probes in five warmups and two
+interleaved 31-repetition blocks per profile/mode. Observer contamination is
+classified only when all paired samples are fully valid, deferred p95 improves
+by at least 5 ms, and paired reduction agrees with removed probe time within
+20%; missing, duplicate, or invalid reps yield an inconclusive methodology
+result.

@@ -187,6 +187,27 @@ class Phase1Tests(unittest.TestCase):
         self.assertEqual(bench.parse_perf_log("1 2 3 extra"),[])
         with self.assertRaises(ValueError): bench.validate_phase2_result({"schema":bench.PHASE2_SCHEMA,"phase":"phase2","claims":{"C1":{"status":"PASS","reason":"x"},"C2":{"status":"INCONCLUSIVE","reason":"x"},"C3":{"status":"INCONCLUSIVE","reason":"x"},"C4":{"status":"PASS","reason":"x"},"C5":{"status":"PASS","reason":"x"}},"artifact_root":{"path":"/tmp/no"}})
 
+    def _attribution_fixture(self):
+        root=Path(__file__).parents[1]/"artifacts"/"test-attribution"; (root/"corpus").mkdir(parents=True,exist_ok=True); (root/"profiles"/"bare").mkdir(parents=True,exist_ok=True); (root/"profiles"/"shipped").mkdir(parents=True,exist_ok=True); corpus=root/"corpus"/"s9-1g.log"; corpus.touch(); corpus.open("r+b").truncate(1<<30); files={}
+        for profile,names in (("bare",("teddy",)),("shipped",("teddy","teddy-highlight"))):
+            for name in names:
+                path=root/"profiles"/profile/name; path.write_bytes((profile+name).encode()); digest,size=bench.sha(path); files.setdefault(profile,{})[name]={"path":str(path),"sha256":digest,"size":size,"version":"test","version_capture":{"stdout":"test","stderr":"","exit":0},"arch":"test"}
+        corpus_sha=bench.sha(corpus)[0]; samples=[]
+        for profile in ("bare","shipped"):
+            root_argv=[files[profile]["teddy"]["path"],str(corpus)]; helper=files[profile].get("teddy-highlight",{}).get("path"); group=[{"command":" ".join(root_argv),"pid":1}]+([{"command":helper,"pid":2}] if helper else [])
+            for block,order in ((1,("current","deferred")),(2,("deferred","current"))):
+                for mode in order:
+                    for rep in range(1,32):
+                        ident={"verified":True,"argv":root_argv,"observed":"teddy"}; probes={"identity":{"result":ident,"verified":True,"error":None,"duration_ms":2.0 if mode=="current" else .5,"started_ms":1.0 if mode=="current" else 31.0,"finished_ms":3.0 if mode=="current" else 31.5},"process_group":{"success":True,"rows":group,"error":None,"duration_ms":8.0 if mode=="current" else 1.0,"started_ms":3.0 if mode=="current" else 31.5,"finished_ms":11.0 if mode=="current" else 32.5,"identity":[True,None]}}; process={"exit":0,"signal":None,"reaped":True,"pty_eof":True,"stderr_eof":True,"drain_complete":True,"drain_deadline":False,"timed_out":False,"pty_output_capped":False,"stderr_capped":False,"unsupported":[],"exec_failed":False,"cleanup_error":None,"pgid_after":[],"descendants_left":False,"pgid_probe_error":None,"pgid_before_probe_error":None,"pgid_after_probe_error":None}; readiness={"matched":True,"name":"c1_attribution_ready","matched_at":.04 if mode=="current" else .03,"snapshot":["S9_C1_ROW_000000"]}; samples.append({"profile":profile,"block":block,"mode":mode,"rep":rep,"status":"PASS","valid":True,"validity_reason":"valid paired attribution sample","argv":root_argv,"parent_start_ms":1.0,"probes":probes,"first_output_ms":20.0 if mode=="current" else 10.0,"readiness_ms":readiness["matched_at"]*1000,"readiness":readiness,"identity":ident,"group_identity":[True,None],"process":process})
+        summary={profile:bench._c1_attribution_summary(samples,profile) for profile in ("bare","shipped")}; return {"schema":"teddy-s9-c1-attribution-1","diagnostic":"c1-attribution","artifact_root":{"path":"bench/artifacts/test-attribution"},"geometry":[200,50],"source":{"commit":"test","dirty":False},"profile_provenance":{p:{"root":str(root/"profiles"/p),"helper":files[p].get("teddy-highlight",{}).get("path"),"files":files[p],"exact_files":sorted(files[p])} for p in files},"corpus":{"path":str(corpus),"size":1<<30,"sha256":corpus_sha},"warmups":5,"plan":[list(x) for x in bench.c1_attribution_plan()],"profiles":summary,"samples":samples,"classification":"OBSERVER_CONTAMINATION","claim":"methodology attribution only; no editor performance claim"}
+
+    def test_c1_attribution_materialized_mutations(self):
+        base=self._attribution_fixture(); self.assertTrue(bench.validate_c1_attribution_report(base)); shuffled=json.loads(json.dumps(base)); shuffled["samples"]=list(reversed(shuffled["samples"])); self.assertTrue(bench.validate_c1_attribution_report(shuffled))
+        def reject(label,mutate):
+            value=json.loads(json.dumps(base)); mutate(value); self.assertTrue(bench.validate_c1_attribution_report(base),label+" baseline")
+            with self.assertRaises(ValueError,msg=label): bench.validate_c1_attribution_report(value)
+        reject("missing rep",lambda x:x["samples"].pop()); reject("duplicate rep",lambda x:x["samples"].__setitem__(1,json.loads(json.dumps(x["samples"][0])))); reject("wrong root group member",lambda x:x["samples"][0]["probes"]["process_group"]["rows"].__setitem__(0,{"command":"/wrong","pid":1})); reject("extra group member",lambda x:x["samples"][0]["probes"]["process_group"]["rows"].append({"command":"/extra","pid":2})); reject("readiness sentinel",lambda x:x["samples"][0]["readiness"]["snapshot"].__setitem__(0,"filename only")); reject("current probe ordering",lambda x:x["samples"][0]["probes"]["identity"].__setitem__("finished_ms",21.0)); reject("deferred probe ordering",lambda x:x["samples"][31]["probes"]["identity"].__setitem__("started_ms",1.0)); reject("profile provenance path",lambda x:next(iter(x["profile_provenance"]["bare"]["files"].values())).__setitem__("path","/wrong/binary")); reject("profile provenance hash",lambda x:next(iter(x["profile_provenance"]["bare"]["files"].values())).__setitem__("sha256","0"*64)); reject("sample argv provenance",lambda x:x["samples"][0]["argv"].__setitem__(0,"/wrong/teddy")); reject("current probe",lambda x:x["samples"][0]["probes"]["process_group"].__setitem__("success",False)); reject("deferred probe",lambda x:x["samples"][31]["probes"]["identity"].__setitem__("verified",False)); reject("unverified identity",lambda x:x["samples"][0]["identity"].__setitem__("verified",False)); reject("signal",lambda x:x["samples"][0]["process"].__setitem__("signal",9)); reject("timeout",lambda x:x["samples"][0]["process"].__setitem__("timed_out",True)); reject("cap",lambda x:x["samples"][0]["process"].__setitem__("pty_output_capped",True)); reject("unsupported",lambda x:x["samples"][0]["process"].__setitem__("unsupported",["x"])); reject("cleanup",lambda x:x["samples"][0]["process"].__setitem__("cleanup_error","error")); reject("PGID",lambda x:x["samples"][0]["process"].__setitem__("pgid_after",[{"pid":2}])); reject("duration arithmetic",lambda x:x["profiles"]["bare"]["blocks"]["1"].__setitem__("current_p95_ms",999.0)); reject("one block criterion",lambda x:x["profiles"]["bare"]["blocks"]["1"].__setitem__("classification","NO_REPRODUCIBLE_OBSERVER_CONTAMINATION")); reject("profile classification",lambda x:x["profiles"]["bare"].__setitem__("classification","NO_REPRODUCIBLE_OBSERVER_CONTAMINATION")); reject("top-level observer contamination",lambda x:x.__setitem__("classification","NO_REPRODUCIBLE_OBSERVER_CONTAMINATION"))
+
     def test_comparator_command_contract(self):
         corpus=str(Path("/tmp/s9-1g.log").resolve())
         self.assertEqual(bench.comparator_argv("nvim","/bin/nvim",corpus),["/bin/nvim","--clean","-R","--",corpus])
@@ -196,11 +217,16 @@ class Phase1Tests(unittest.TestCase):
         self.assertEqual(bench.comparator_argv("less","/bin/less",corpus),["/bin/less","-n","-L","--",corpus])
         with self.assertRaises(ValueError): bench.comparator_argv("vis","/usr/bin/vis",corpus)
 
+    def test_c1_attribution_plan_timing_and_criterion(self):
+        plan=bench.c1_attribution_plan(); self.assertEqual(len(plan),124); self.assertEqual(plan[:4],[(1,"current",1),(1,"deferred",1),(1,"current",2),(1,"deferred",2)]); self.assertEqual(plan[62:66],[(2,"deferred",1),(2,"current",1),(2,"deferred",2),(2,"current",2)])
+        result=bench.c1_attribution_criterion([40.0]*31,[30.0]*31,10.0); self.assertEqual(result["classification"],"OBSERVER_CONTAMINATION"); self.assertTrue(result["criterion"])
+        result=bench.c1_attribution_criterion([40.0]*31,[37.0]*31,10.0); self.assertEqual(result["classification"],"NO_REPRODUCIBLE_OBSERVER_CONTAMINATION")
+
     def test_phase2_validator_and_report_mutations(self):
         p=Path(__file__).parents[1]/"results"/"canonical.json"
         if not p.is_file(): self.skipTest("canonical Phase 2 result not present")
         base=json.loads(p.read_text()); self.assertTrue(bench.validate_phase2_result(base)); text=(Path(__file__).parents[2]/"docs"/"bench_results.md").read_text(); self.assertTrue(bench.validate_phase2_report(base,text))
-        for mutate in (lambda x:x["claims"]["C1"]["quantiles_ms"]["bare"].__setitem__("p95",1),lambda x:x["claims"]["C1"].__setitem__("status","PASS"),lambda x:x["claims"]["C3"]["attempts"][0].__setitem__("semantic_association",True),lambda x:x["claims"]["C4"]["fixtures"].pop(),lambda x:x["environment"].__setitem__("CMUX_SOCKET_CAPABILITY","forbidden")):
+        for mutate in (lambda x:x["claims"]["C1"]["quantiles_ms"]["bare"].__setitem__("p95",1),lambda x:x["claims"]["C1"].__setitem__("status","FAIL"),lambda x:x["claims"]["C3"]["attempts"][0].__setitem__("semantic_association",True),lambda x:x["claims"]["C4"]["fixtures"].pop(),lambda x:x["environment"].__setitem__("CMUX_SOCKET_CAPABILITY","forbidden")):
             value=json.loads(json.dumps(base)); mutate(value)
             with self.assertRaises(ValueError): bench.validate_phase2_result(value)
         with self.assertRaises(ValueError): bench.validate_phase2_report(base,text+"\nforged\n")
@@ -224,6 +250,18 @@ class Phase1Tests(unittest.TestCase):
         text=(Path(__file__).parents[2]/"docs"/"bench_results.md").read_text()
         mutated=json.loads(json.dumps(base)); mutated["claims"]["C1"]["quantiles_ms"]["bare"]["p95"]+=1
         with self.assertRaises(ValueError,msg="stale rendered report after C1 numeric mutation"): bench.validate_phase2_report(mutated,text)
+
+    def test_phase2_c1_observer_boundary_and_methodology_are_materialized(self):
+        p=Path(__file__).parents[1]/"results"/"canonical.json"
+        if not p.is_file(): self.skipTest("canonical Phase 2 result not present")
+        base=json.loads(p.read_text()); self.assertTrue(bench.validate_phase2_result(base)); text=(Path(__file__).parents[2]/"docs"/"bench_results.md").read_text(); self.assertTrue(bench.validate_phase2_report(base,text))
+        def reject(label,mutate):
+            value=json.loads(json.dumps(base)); mutate(value); self.assertTrue(bench.validate_phase2_result(base),label+" baseline")
+            with self.assertRaises(ValueError,msg=label): bench.validate_phase2_result(value)
+        reject("C1 pre-sentinel identity probe",lambda x:x["claims"]["C1"]["profiles"]["bare"][0]["identity_probe"].__setitem__("started_ms",0.0))
+        reject("C1 pre-sentinel PGID probe",lambda x:x["claims"]["C1"]["profiles"]["shipped"][0]["process_group_probe"].__setitem__("started_ms",0.0))
+        reject("C1 methodology version",lambda x:x.__setitem__("methodology","old-method"))
+        reject("C1 historical context",lambda x:x.__setitem__("historical_context","missing"))
 
     def _materialized_phase2_fixture(self, directory):
         source=Path(__file__).parents[1]/"results"/"canonical.json"
