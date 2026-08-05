@@ -225,7 +225,7 @@ class Phase1Tests(unittest.TestCase):
     def test_phase2_validator_and_report_mutations(self):
         p=Path(__file__).parents[1]/"results"/"canonical.json"
         if not p.is_file(): self.skipTest("canonical Phase 2 result not present")
-        base=json.loads(p.read_text()); self.assertTrue(bench.validate_phase2_result(base)); text=(Path(__file__).parents[2]/"docs"/"bench_results.md").read_text(); self.assertTrue(bench.validate_phase2_report(base,text))
+        base=json.loads(p.read_text()); self.assertTrue(bench.validate_phase2_result(base)); text=(Path(__file__).parents[2]/"docs"/"bench_results.md").read_text(); self.assertTrue(bench.validate_phase2_report(base,text)); self.assertIn("## Editor metric summary",text); self.assertIn("| Editor / profile | Repetitions | p50 (ms) | p95 (ms) | Status | Comparability caveat |",text); self.assertIn("| Teddy / bare |",text); self.assertIn("does not affect C1–C5",text)
         for mutate in (lambda x:x["claims"]["C1"]["quantiles_ms"]["bare"].__setitem__("p95",1),lambda x:x["claims"]["C1"].__setitem__("status","FAIL"),lambda x:x["claims"]["C3"]["attempts"][0].__setitem__("semantic_association",True),lambda x:x["claims"]["C4"]["fixtures"].pop(),lambda x:x["environment"].__setitem__("CMUX_SOCKET_CAPABILITY","forbidden")):
             value=json.loads(json.dumps(base)); mutate(value)
             with self.assertRaises(ValueError): bench.validate_phase2_result(value)

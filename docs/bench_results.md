@@ -29,6 +29,18 @@ Artifact bundle: `bench/artifacts/phase2-20260803T191923Z-0f1ca01656`
 | bare | 5 | 4.022 | 4.287 |
 | shipped | 5 | 3.457 | 6.855 |
 
+## Editor metric summary
+
+| Editor / profile | Repetitions | p50 (ms) | p95 (ms) | Status | Comparability caveat |
+|---|---:|---:|---:|---|---|
+| Teddy / bare | 5 | 4.022 | 4.287 | PASS | Teddy C1 claim; comparator observations do not affect C1–C5. |
+| Teddy / shipped | 5 | 3.457 | 6.855 | PASS | Teddy C1 claim; comparator observations do not affect C1–C5. |
+| nvim | 2 | 1436.614 | 1555.598 | INCONCLUSIVE | Editor runtime/config differs from Teddy; non-comparable open-screen observation; does not affect C1–C5. |
+| vim | 2 | 1962.795 | 1969.769 | INCONCLUSIVE | Editor runtime/config differs from Teddy; non-comparable open-screen observation; does not affect C1–C5. |
+| hx | 2 | 2622.801 | 2630.612 | INCONCLUSIVE | Editor runtime/config differs from Teddy; non-comparable open-screen observation; does not affect C1–C5. |
+| kak | 2 | 1259.932 | 1271.204 | INCONCLUSIVE | Kakoune two-process/server model; editor runtime/config differs; non-comparable open-screen observation. |
+| less | 2 | 46.869 | 47.790 | INCONCLUSIVE | less is a demand-driven pager; editor runtime/config differs; non-comparable open-screen observation. |
+
 ## Runtime claim details
 - **C2:** 2 runtime attempts; 2 parsed perf lines; p95 `2030.4` us; action association `False`.
 - **C3:** 2 PTY attempts; named prompt/search/cancel actions retained; semantic association `False`.

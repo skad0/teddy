@@ -875,6 +875,16 @@ def phase2_report_markdown(result):
         lines.append(f"| {k} | **{c[k]['status']}** | {criteria[k]}; {c[k]['reason']} | `{ep}` |")
     lines += ["","## C1 repetitions","","| Profile | Repetitions | p50 (ms) | p95 (ms) |","|---|---:|---:|---:|"]
     for p,q in c["C1"]["quantiles_ms"].items(): lines.append(f"| {p} | {q['count']} | {q['p50']:.3f} | {q['p95']:.3f} |")
+    fmt=lambda value: f"{value:.3f}" if isinstance(value,(int,float)) else "unavailable"
+    lines += ["","## Editor metric summary","","| Editor / profile | Repetitions | p50 (ms) | p95 (ms) | Status | Comparability caveat |","|---|---:|---:|---:|---|---|"]
+    for p,q in c["C1"]["quantiles_ms"].items(): lines.append(f"| Teddy / {p} | {q['count']} | {fmt(q.get('p50'))} | {fmt(q.get('p95'))} | {c['C1']['status']} | Teddy C1 claim; comparator observations do not affect C1–C5. |")
+    for r in result["comparators"].get("records",[]):
+        if not r.get("attempts"): continue
+        q=r.get("quantiles_ms",{}); name=r["name"]
+        if name=="kak": caveat="Kakoune two-process/server model; editor runtime/config differs; non-comparable open-screen observation."
+        elif name=="less": caveat="less is a demand-driven pager; editor runtime/config differs; non-comparable open-screen observation."
+        else: caveat="Editor runtime/config differs from Teddy; non-comparable open-screen observation; does not affect C1–C5."
+        lines.append(f"| {name} | {q.get('count',0)} | {fmt(q.get('p50'))} | {fmt(q.get('p95'))} | {r.get('status','-')} | {caveat} |")
     lines += ["","## Runtime claim details",f"- **C2:** {len(c['C2'].get('attempts',[]))} runtime attempts; {sum(a.get('line_count',0) for a in c['C2'].get('attempts',[]))} parsed perf lines; p95 `{c['C2'].get('quantiles_us',{}).get('p95')}` us; action association `{c['C2']['status'] == 'PASS'}`.",f"- **C3:** {len(c['C3'].get('attempts',[]))} PTY attempts; named prompt/search/cancel actions retained; semantic association `{c['C3']['status'] == 'PASS'}`.",f"- **C4:** {sum(1 for x in c['C4'].get('fixtures',[]) if x.get('status')=='PASS')}/{len(c['C4'].get('fixtures',[]))} fixture/profile digest checks passed.",f"- **C5:** {len(c['C5'].get('samples',[]))} workload sample records; RSS is diagnostic only and remains `NOT_MEASURED`.","","## Comparators","","| Tool | Status | Identity | Version probe |","|---|---|---|---|"]
     for t in result["comparators"]["tools"]:
         ident=f"`{t.get('path','-')}` `{t.get('sha256','-')[:12]}`" if t.get("path") else "-"; probe=t.get("version",{}).get("exit","-") if isinstance(t.get("version"),dict) else "-"; lines.append(f"| {t['name']} | {t['status']} | {ident} | exit `{probe}` |")
