@@ -1,10 +1,97 @@
-import contextlib, hashlib, io, json, os, sys, tempfile, threading, time, unittest, textwrap
+import contextlib, hashlib, io, json, os, pty, select, subprocess, sys, tempfile, threading, time, unittest, textwrap
+from unittest import mock
 from types import SimpleNamespace
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parents[1]))
 import bench
 
+class ExecutorFakeSession(bench.Session):
+    """Deterministic in-process Session: every write creates a new PTY event."""
+    def __init__(self, argv, geometry=(200,50), timeout=4):
+        super().__init__(argv,geometry,timeout); self.t0=0.0; self.clock=0.0
+    def spawn(self, home, cwd, preflight=True):
+        ExecutorFakeSession.current_argv=self.argv
+        self.pid=self.root_pid=self.pgid=self.original_pgid=1; self.status=None; self.closed=False
+        self.identity={"verified":True,"argv":self.argv}
+    def _emit(self, data):
+        self.clock+=.1; event={"channel":"pty_output_raw","at":self.clock,"data":data.hex()}; self.trace_events.append(event)
+        self.trace_events.append({"channel":"pty_output","at":self.clock,"data":data.hex()}); self.output_events.append(self.clock); self.trace_bytes+=len(data); self.trace_hash.update(data); self.screen.feed(data)
+    def until(self, predicate, name="endpoint", after_output_count=None):
+        data={"startup_head":b"UBENCH_HEAD_RECORD\n","prompt":b"/\n","typed_needle":b"UBENCH_NEEDLE\n","submit":b"UBENCH_TARGET_RECORD\n","quit":b"QUIT\n"}.get(name,b"EVENT\n")
+        self._emit(data); i=len(self.output_events)-1
+        try: matched=bool(predicate(self.screen,getattr(self,"_pre_write_screen",list(self.screen.text()))))
+        except TypeError: matched=bool(predicate(self.screen))
+        return {"name":name,"matched":matched,"matched_at":self.output_events[i],"event_index":i,"trace_index":len(self.trace_events)-1,"snapshot":list(self.screen.text())}
+    def send_action(self, data, name="action"):
+        self.clock+=.1; at=self.clock; baseline=len(self.output_events); self._pre_write_screen=list(self.screen.text()); trace_index=len(self.trace_events); self.trace_events.append({"channel":"pty_input","at":at,"data":data.hex(),"action":True,"name":name}); return {"name":name,"bytes":data.hex(),"write":at,"trace_index":trace_index,"output_baseline":baseline,"pre_write_screen":self._pre_write_screen}
+    def write_endpoint(self, data, expected, name="action"):
+        action=self.send_action(data,name); endpoint=self.until(expected,name,action["output_baseline"]); first=endpoint["matched_at"]; action.update({"first_post_write_output":first,"first_output_after_write":first,"endpoint":first,"endpoint_event_index":endpoint["event_index"],"output_event_index":endpoint["event_index"],"trace_output_index":endpoint.get("trace_index"),"input_trace_index":action["trace_index"],"input_trace_time":action["write"],"last_output":first,"quiet_complete":(first+.01 if isinstance(first,(int,float)) else None),"quiet_gap":.01,"output_event_count":1,"endpoint_found":endpoint["matched"],"matched":endpoint["matched"],"matched_at":first,"snapshot":endpoint["snapshot"]}); self.quiet_complete=(first+.01 if isinstance(first,(int,float)) else None); self.actions.append(action); self.endpoint_snapshots.append({"name":name,"at":first,"kind":"action","rows":endpoint["snapshot"]}); return action
+    def write(self, data, expected, name="action"):
+        return self.write_endpoint(data,expected,name).get("matched") is True
+    def close(self):
+        self.status=0; self.pid=-1; self.closed=True; self.drain_complete=True; self.pty_eof=self.stderr_eof=True; self.pgid_after=[]; self.descendants=[]; return True
+    def record(self):
+        return {"exit":0,"signal":None,"reaped":True,"pty_eof":True,"stderr_eof":True,"drain_complete":True,"drain_deadline":False,"cleanup_error":None,"pgid_after":[],"descendants_left":False,"timed_out":False,"output_capped":False,"pty_output_capped":False,"stderr_capped":False,"unsupported":[],"exec_failed":False,"trace_events":self.trace_events,"actions":self.actions,"screen":self.screen.text(),"descendants":[],"pgid_before":getattr(self,"pgid_before",[]),"pgid_before_probe_error":getattr(self,"pgid_before_probe_error",None),"harness_traffic":[]}
+
+class LateOutputSession(ExecutorFakeSession):
+    def until(self,predicate,name="endpoint",after_output_count=None):
+        result=super().until(predicate,name,after_output_count)
+        if name=="prompt": self._emit(b"\033[2J\033[1;1HLATE_AFTER_PROMPT\n")
+        return result
+
+class NoPromptOutputSession(ExecutorFakeSession):
+    def write_endpoint(self,data,expected,name="action"):
+        if name!="prompt": return super().write_endpoint(data,expected,name)
+        action=self.send_action(data,name)
+        action.update({"first_post_write_output":None,"first_output_after_write":None,"endpoint":None,
+                       "endpoint_event_index":None,"output_event_index":None,"trace_output_index":None,
+                       "input_trace_index":action["trace_index"],"input_trace_time":action["write"],
+                       "last_output":None,"quiet_complete":None,"quiet_gap":None,
+                       "output_event_count":0,"endpoint_found":False,"matched":False,"matched_at":None,
+                       "snapshot":list(self.screen.text())})
+        self.actions.append(action); self.endpoint_snapshots.append({"name":name,"at":None,"kind":"action","rows":action["snapshot"]})
+        return action
+
+class TargetBeforeSubmitSession(ExecutorFakeSession):
+    def write_endpoint(self,data,expected,name="action"):
+        if name!="submit": return super().write_endpoint(data,expected,name)
+        self._emit(b"\nUBENCH_TARGET_RECORD\n")
+        output_index=len(self.output_events)-1; trace_index=len(self.trace_events)-1; at=self.output_events[-1]
+        action=self.send_action(data,name)
+        action.update({"first_post_write_output":at,"first_output_after_write":at,"endpoint":at,"endpoint_event_index":output_index,"output_event_index":output_index,"trace_output_index":trace_index,"input_trace_index":action["trace_index"],"input_trace_time":action["write"],"last_output":at,"quiet_complete":at+.01,"quiet_gap":.01,"output_event_count":1,"endpoint_found":True,"matched":True,"matched_at":at,"snapshot":list(self.screen.text())})
+        self.quiet_complete=at+.01; self.actions.append(action); self.endpoint_snapshots.append({"name":name,"at":at,"kind":"action","rows":action["snapshot"]}); return action
+
 class Phase1Tests(unittest.TestCase):
+    def _strict_smoke(self, root, adapters):
+        root=Path(root); records={}
+        for adapter in adapters:
+            name=adapter["name"]
+            if adapter["status"]!="IDENTITY_QUALIFIED":
+                records[name]={"status":adapter["status"],"reason":"not runnable","attempts":0}
+                continue
+            d=root/"smoke"/name; d.mkdir(parents=True,exist_ok=True)
+            def put(filename,data):
+                p=d/filename; p.write_bytes(data); h,z=bench.sha(p); return {"path":str(p),"sha256":h,"size":z}
+            identity={"verified":True,"argv":adapter["argv"],"before":bench._universal_identity(adapter["path"],adapter["argv"],adapter["version"]),"after":bench._universal_identity(adapter["path"],adapter["argv"],adapter["version"])}; topology={"expected_argvs":[adapter["argv"]]+([[adapter["helper_path"]]] if adapter["helper_path"] else []),"observed_argvs":[adapter["argv"]]+([[adapter["helper_path"]]] if adapter["helper_path"] else []),"unexpected":False,"pgid_before":[{"command":" ".join(x),"pid":i+1} for i,x in enumerate([adapter["argv"]]+([[adapter["helper_path"]]] if adapter["helper_path"] else []))],"descendants":[],"pgid_after":[]}
+            actions=[{"name":"prompt","bytes":adapter["search_prompt"],"trace_index":2,"write":2.0},{"name":"typed_needle","bytes":"5542454e43485f4e4545444c45","trace_index":5,"write":4.0},{"name":"submit","bytes":adapter["search_submit"],"trace_index":8,"write":6.0},{"name":"quit","bytes":adapter["quit"],"trace_index":11,"write":8.0}]
+            clear=lambda text:(b"\033[2J\033[1;1H"+text+b"\n")
+            screens=[clear(b"UBENCH_HEAD_RECORD"),clear(b"PROMPT"),clear(b"PROMPT UBENCH_NEEDLE"),clear(b"UBENCH_TARGET_RECORD UBENCH_NEEDLE")]
+            trace=[]
+            for i,sc in enumerate(screens):
+                trace += [{"channel":"pty_output_raw","at":float(i*2+1),"data":sc.hex()},{"channel":"pty_output","at":float(i*2+1),"data":sc.hex()}]
+                if i<4: trace += [{"channel":"pty_input","at":float(i*2+2),"data":actions[i]["bytes"],"action":True,"name":actions[i]["name"]}]
+            screen=screens[-1]; process={"exit":0,"signal":None,"reaped":True,"drain_complete":True,"pty_eof":True,"stderr_eof":True,"drain_deadline":False,"pgid_after":[],"descendants_left":False,"timed_out":False,"unsupported":[],"cleanup_error":None,"exec_failed":False,"output_capped":False,"stderr_capped":False}; phase_records={}
+            for phase,sc,idx in zip(("startup_head","prompt","typed_needle","target"),screens,(0,1,2,3)):
+                payload={"name":phase,"phase":phase,"matched":True,"missing":False,"output_event_ordinal":idx,"trace_event_index":idx*3+1,"causal_time":float(idx*2+1),"associated_input_trace_event_index":None if idx==0 else idx*3-1,"input_write_time":None if idx==0 else float(idx*2),"rows":bench.Screen(200,50).text()}
+                model=bench.Screen(200,50); model.feed(sc); payload["rows"]=model.text(); phase_records[phase]=put(phase+".json",json.dumps(payload,sort_keys=True).encode())
+            records[name]={"helper_identity_before":bench._universal_helpers(adapter),"helper_identity_after":bench._universal_helpers(adapter),"status":"PASS","reason":"strict fixture","attempts":1,"argv":adapter["argv"],"process":process,"identity":identity,"topology":topology,"actions":actions,"harness_traffic":[],"records":{"trace":put("trace.json",json.dumps(trace).encode()),"screen":put("screen.txt",b"\n".join([])+b"".join([]) if False else b""),"actions":put("actions.json",json.dumps(actions).encode()),"identity":put("identity.json",json.dumps(identity,sort_keys=True).encode()),"topology":put("topology.json",json.dumps(topology,sort_keys=True).encode()),"phase_snapshots":put("phase_snapshots.json",json.dumps(phase_records,sort_keys=True).encode())}}
+            # The final screen is the replayed target endpoint, not a phase union.
+            model=bench.Screen(200,50)
+            for event in trace:
+                if event["channel"]=="pty_output": model.feed(bytes.fromhex(event["data"]))
+            records[name]["records"]["screen"]=put("screen.txt",("\n".join(model.text())+"\n").encode())
+        return {"corpus":"/tmp/smoke-corpus","records":records}
+
     def test_eof_and_deadline_are_distinct(self):
         s=bench.Session([]); s.master,ptyw=os.pipe(); s.er,errw=os.pipe(); os.close(ptyw); os.close(errw); s.t0=0
         s._read(.01)
@@ -191,7 +278,7 @@ class Phase1Tests(unittest.TestCase):
         root=Path(__file__).parents[1]/"artifacts"/"test-attribution"; (root/"corpus").mkdir(parents=True,exist_ok=True); (root/"profiles"/"bare").mkdir(parents=True,exist_ok=True); (root/"profiles"/"shipped").mkdir(parents=True,exist_ok=True); corpus=root/"corpus"/"s9-1g.log"; corpus.touch(); corpus.open("r+b").truncate(1<<30); files={}
         for profile,names in (("bare",("teddy",)),("shipped",("teddy","teddy-highlight"))):
             for name in names:
-                path=root/"profiles"/profile/name; path.write_bytes((profile+name).encode()); digest,size=bench.sha(path); files.setdefault(profile,{})[name]={"path":str(path),"sha256":digest,"size":size,"version":"test","version_capture":{"stdout":"test","stderr":"","exit":0},"arch":"test"}
+                path=root/"profiles"/profile/name; path.write_bytes((profile+name).encode()); digest,size=bench.sha(path); files.setdefault(profile,{})[name]={"path":str(path),"sha256":digest,"size":size,"version":"test","version_capture":{"stdout":"test","stderr":"","exit":0},"arch":bench.platform.machine()}
         corpus_sha=bench.sha(corpus)[0]; samples=[]
         for profile in ("bare","shipped"):
             root_argv=[files[profile]["teddy"]["path"],str(corpus)]; helper=files[profile].get("teddy-highlight",{}).get("path"); group=[{"command":" ".join(root_argv),"pid":1}]+([{"command":helper,"pid":2}] if helper else [])
@@ -262,6 +349,332 @@ class Phase1Tests(unittest.TestCase):
         reject("C1 pre-sentinel PGID probe",lambda x:x["claims"]["C1"]["profiles"]["shipped"][0]["process_group_probe"].__setitem__("started_ms",0.0))
         reject("C1 methodology version",lambda x:x.__setitem__("methodology","old-method"))
         reject("C1 historical context",lambda x:x.__setitem__("historical_context","missing"))
+
+    def test_universal_contract_is_separate_and_adversarial(self):
+        with tempfile.TemporaryDirectory() as d: self._universal_contract_body(Path(d))
+
+    def _universal_contract_body(self, d):
+        # Participants must be real files on disk: the validator re-hashes every
+        # IDENTITY_QUALIFIED binary, so synthetic paths cannot stand in.
+        adapters=[]
+        for name in bench.UNIVERSAL_ADAPTER_ORDER:
+            if name=="vis": adapters.append({"name":name,"status":"REJECTED_UNSUPPORTED","path":"/usr/bin/vis"})
+            elif name=="vi": adapters.append({"name":name,"status":"ALIAS_OF","alias_of":"vim","path":str(d/"vim")})
+            else:
+                p=d/name; p.write_bytes(name.encode()); h,z=bench.sha(p)
+                adapters.append({"name":name,"status":"IDENTITY_QUALIFIED","path":str(p),"sha256":h,"size":z,"arch":"arm64","version":"1"})
+        (d/"teddy-highlight").write_bytes(b"helper")
+        vim=next(a for a in adapters if a["name"]=="vim"); vi=next(a for a in adapters if a["name"]=="vi"); vi.update({k:vim[k] for k in ("path","sha256","size","arch","version")}); ops={a["name"]:{op:{"status":"INCONCLUSIVE","repetitions":0,"p50_ms":None,"p95_ms":None,"attempts":[]} for op in ("startup","search")} for a in adapters if a["status"]=="IDENTITY_QUALIFIED"}
+        for a in adapters:
+            spec=bench.UNIVERSAL_ADAPTER_SPEC[a["name"]]; a.update({"alias_of":a.get("alias_of"),"argv":bench.universal_adapter_argv(a["name"],a["path"],"/tmp/universal"),"search_prompt":spec["search_prompt"].hex(),"search_submit":spec["search_submit"].hex(),"quit":spec["quit"].hex(),"expected_topology":spec["expected_topology"],"expected_class":spec["expected_class"],"helper_path":str(Path(a["path"]).parent/"teddy-highlight") if a["name"]=="teddy-shipped" else None,"sha256":a.get("sha256","0"*64),"size":a.get("size",1),"arch":a.get("arch","arm64"),"version":a.get("version","rejected")})
+        result={"schema":bench.UNIVERSAL_SCHEMA,"phase":"universal-comparison","contract_only":True,"artifact_root":{"path":"/tmp/universal-artifacts"},"geometry":[200,50],"warmups":3,"blocks":2,"repetitions_per_block":16,"corpus":{"path":"/tmp/universal","size":1<<30,"record_bytes":64,"sha256":"b"*64,"head_marker":"UBENCH_HEAD_RECORD","needle":"UBENCH_NEEDLE","target_marker":"UBENCH_TARGET_RECORD","tail_marker":"UBENCH_TAIL_RECORD","head_offset":0,"target_offset":512<<20,"needle_offset":(512<<20)+len("UBENCH_TARGET_RECORD "),"tail_offset":(1<<30)-64},"adapters":adapters,"operations":ops}
+        result["execution_state"]="not_started"; result["schedule"]=[]; result["adapter_smoke"]=self._strict_smoke("/tmp/universal-artifacts",adapters); [r.update({"attempts":0,"status":"INCONCLUSIVE"}) for r in result["adapter_smoke"]["records"].values()]
+        with mock.patch.object(bench,"validate_universal_corpus",return_value=True): self.assertTrue(bench.validate_universal_result(result))
+        self.assertTrue(bench.validate_universal_report(result,bench.universal_report_markdown(result)))
+        bad=json.loads(json.dumps(result)); bad["adapters"][0],bad["adapters"][1]=bad["adapters"][1],bad["adapters"][0]
+        with mock.patch.object(bench,"validate_universal_corpus",return_value=True):
+            with self.assertRaises(ValueError): bench.validate_universal_result(bad)
+        self.assertEqual(bench.universal_metric([])["status"],"INCONCLUSIVE"); self.assertEqual(bench.universal_adapter_argv("vi","/opt/vim","/tmp/x")[0],"/opt/vim")
+
+    def test_universal_teddy_positional_and_deterministic_query_reply(self):
+        argv=bench.universal_adapter_argv("teddy-shipped","/stage/teddy","/stage/corpus")
+        self.assertEqual(argv,["/stage/teddy","/stage/corpus"]); self.assertNotIn("--read-only",argv)
+        s=bench.Session([]); s.master,writer=os.pipe(); s.er,errw=os.pipe(); os.set_blocking(s.master,False); os.set_blocking(s.er,False); s.t0=time.monotonic()
+        os.write(writer,b"\033["); s._read(.01); os.write(writer,b"6n"); s._read(.01); os.write(writer,b"\033"); s._read(.01); os.write(writer,b"[c"); s._read(.01)
+        self.assertEqual([x["kind"] for x in s.harness_traffic],["DSR_REPLY","DA_REPLY"]); self.assertTrue(all(x["deterministic"] for x in s.harness_traffic))
+        for fd in (writer,errw,s.master,s.er): os.close(fd)
+
+    def test_trace_provenance_is_streaming_and_materialized(self):
+        base=[{"channel":"pty_output_raw","at":1.0,"data":"616263"},{"channel":"pty_output","at":1.0,"data":"616263"}]
+        self.assertTrue(bench.validate_trace_provenance(base,[]))
+        for bad in (
+            [{**base[0]},{**base[1],"at":2.0}],
+            [{**base[0]},{**base[1],"data":"616264"}],
+            [{"channel":"pty_output","at":1.0,"data":"616263"},{"channel":"pty_output_raw","at":1.0,"data":"616263"}],
+            [{"channel":"pty_output_raw","at":1.0,"data":"1b5b"},{"channel":"pty_output","at":1.0,"data":""}],
+        ): self.assertFalse(bench.validate_trace_provenance(bad,[]))
+        query=[{"channel":"pty_output_raw","at":1.0,"data":"1b5b"},{"channel":"pty_output","at":1.0,"data":""},{"channel":"pty_output_raw","at":2.0,"data":"366e58"},{"channel":"pty_input","at":2.0,"harness":True,"data":"1b5b313b3152"},{"channel":"pty_output","at":2.0,"data":"58"}]
+        traffic=[{"kind":"DSR_REPLY","query":"1b5b366e","reply":"1b5b313b3152","deterministic":True,"at":2.0}]
+        self.assertTrue(bench.validate_trace_provenance(query,traffic))
+        delayed=json.loads(json.dumps(traffic)); delayed[0]["at"]=1.1
+        self.assertFalse(bench.validate_trace_provenance(query,delayed))
+        with tempfile.TemporaryDirectory() as d:
+            result=self._strict_universal_fixture(d); attempt=result["operations"]["teddy-shipped"]["startup"]["attempts"][0]; trace=json.loads(Path(attempt["trace"]["path"]).read_text()); trace[1]["at"]=2.0; Path(attempt["trace"]["path"]).write_text(json.dumps(trace)); attempt["trace"]["sha256"],attempt["trace"]["size"]=bench.sha(attempt["trace"]["path"]); self.assertFalse(bench.validate_universal_attempt(attempt,"startup","b"*64,next(a for a in result["adapters"] if a["name"]=="teddy-shipped"),result["artifact_root"],result["corpus"]["path"]))
+
+    def test_attempted_smoke_strict_lifecycle_mutations(self):
+        process={"exit":0,"signal":None,"reaped":True,"pty_eof":True,"stderr_eof":True,"drain_complete":True,"drain_deadline":False,"cleanup_error":None,"pgid_after":[],"descendants_left":False,"timed_out":False,"output_capped":False,"stderr_capped":False,"unsupported":[],"exec_failed":False}
+        self.assertTrue(bench._smoke_lifecycle_ok(process))
+        for field,value in (("drain_deadline",True),("cleanup_error","x"),("output_capped",True),("stderr_capped",True)):
+            bad=dict(process); bad[field]=value; self.assertFalse(bench._smoke_lifecycle_ok(bad),field)
+
+    def test_universal_fake_pty_participant_emits_queries_prompt_target_and_child(self):
+        script=Path(__file__).with_name("fake_universal_adapter.py"); s=bench.Session([sys.executable,str(script)],timeout=3); s.spawn(script.parent,script.parent)
+        self.assertTrue(s.until(lambda sc:sc.contains("UBENCH_HEAD_RECORD"),"head")["matched"])
+        self.assertTrue(s.write(b"/UBENCH_NEEDLE\r",lambda sc:sc.contains("UBENCH_TARGET_RECORD"),"search")); self.assertTrue(s.close())
+        record=s.record(); self.assertEqual(record["exit"],0); self.assertTrue(any(x["kind"]=="DSR_REPLY" for x in record["harness_traffic"])); self.assertTrue(any(x["kind"]=="DA_REPLY" for x in record["harness_traffic"])); self.assertFalse(record["descendants_left"]); self.assertTrue(record["drain_complete"])
+
+    def _fresh_universal_run(self, root, session_cls):
+        root=Path(root); corpus=root/"tiny"; corpus.write_bytes(b"UBENCH_HEAD_RECORD\nUBENCH_TARGET_RECORD UBENCH_NEEDLE\n"); (root/"teddy-highlight").write_bytes(b"helper")
+        adapters=[]
+        for name in bench.UNIVERSAL_ADAPTER_ORDER:
+            path=root/name; path.write_bytes(name.encode()); spec=bench.UNIVERSAL_ADAPTER_SPEC[name]
+            status="REJECTED_UNSUPPORTED" if name=="vis" else ("ALIAS_OF" if name=="vi" else "IDENTITY_QUALIFIED")
+            if name=="vis": path=Path("/usr/bin/vis")
+            h,z=("0"*64,1) if name=="vis" else bench.sha(path)
+            adapters.append({"name":name,"status":status,"path":str(path.resolve()),"sha256":h,"size":z,"arch":bench.platform.machine(),"version":"fake","alias_of":"vim" if name=="vi" else None,"argv":bench.universal_adapter_argv(name,path,corpus),"search_prompt":spec["search_prompt"].hex(),"search_submit":spec["search_submit"].hex(),"quit":spec["quit"].hex(),"expected_topology":spec["expected_topology"],"expected_class":spec["expected_class"],"helper_path":str((root/"teddy-highlight").resolve()) if name=="teddy-shipped" else None})
+        vim=next(a for a in adapters if a["name"]=="vim"); vi=next(a for a in adapters if a["name"]=="vi"); vi.update({k:vim[k] for k in ("path","sha256","size","arch","version")}); vi["argv"]=bench.universal_adapter_argv("vi",vi["path"],corpus)
+        smoke=self._strict_smoke(root/"artifacts",adapters); smoke["records"]["teddy-shipped"]["status"]="PASS"
+        for name in ("vim","hx","kak","less","vi"): smoke["records"][name]={"status":"INCONCLUSIVE","reason":"fresh fake smoke","attempts":0}
+        patch=mock.patch.object(bench,"process_group",side_effect=lambda _:(True,[{"command":" ".join(ExecutorFakeSession.current_argv),"pid":1}]+([{"command":next(a for a in adapters if a["name"]=="teddy-shipped")["helper_path"],"pid":2}] if ExecutorFakeSession.current_argv[0].endswith("teddy-shipped") else []),None))
+        with patch, mock.patch.object(bench,"validate_universal_corpus",return_value=True):
+            return bench.execute_universal_schedule(adapters,str(corpus),root/"artifacts",session_cls=session_cls,smoke=smoke), corpus, smoke
+
+    def test_fresh_late_output_is_excluded_but_retained_in_trace(self):
+        with tempfile.TemporaryDirectory() as d:
+            result,corpus,_=self._fresh_universal_run(d,LateOutputSession)
+            with mock.patch.object(bench,"validate_universal_corpus",return_value=True): self.assertTrue(bench.validate_universal_result(result))
+            attempt=result["operations"]["teddy-shipped"]["search"]["attempts"][0]; phase=json.loads(Path(attempt["phase_snapshots"]["path"]).read_text())["prompt"]; prompt=json.loads(Path(phase["path"]).read_text()); trace=json.loads(Path(attempt["trace"]["path"]).read_text())
+            late=[i for i,e in enumerate(trace) if e.get("channel")=="pty_output" and b"LATE_AFTER_PROMPT" in bytes.fromhex(e["data"])][0]
+            self.assertNotIn("LATE_AFTER_PROMPT","\n".join(prompt["rows"])); self.assertGreater(late,prompt["trace_event_index"]); self.assertEqual(attempt["operations"] if False else prompt["rows"],prompt["rows"])
+            self.assertEqual(result["operations"]["teddy-shipped"]["search"]["status"],"MEASURED"); self.assertEqual(len(result["operations"]["teddy-shipped"]["search"]["attempts"]),32)
+
+    def test_fresh_missing_prompt_is_explicit_inconclusive(self):
+        with tempfile.TemporaryDirectory() as d:
+            result,corpus,smoke=self._fresh_universal_run(d,NoPromptOutputSession)
+            with mock.patch.object(bench,"validate_universal_corpus",return_value=True): self.assertTrue(bench.validate_universal_result(result))
+            op=result["operations"]["teddy-shipped"]["search"]; self.assertEqual(op["status"],"INCONCLUSIVE"); self.assertEqual(op["repetitions"],32); self.assertIsNone(op["p50_ms"]); self.assertIsNone(op["p95_ms"])
+            for attempt in op["attempts"]:
+                self.assertFalse(attempt["valid"]); self.assertEqual(attempt["status"],"INCONCLUSIVE"); self.assertEqual([w["name"] for w in attempt["writes"]],["prompt","quit"])
+                phases=json.loads(Path(attempt["phase_snapshots"]["path"]).read_text()); p=json.loads(Path(phases["prompt"]["path"]).read_text()); self.assertEqual((p["matched"],p["missing"],p["rows"],p["output_event_ordinal"],p["trace_event_index"],p["causal_time"]),(False,True,[],None,None,None)); self.assertEqual(p["associated_input_trace_event_index"],attempt["writes"][0]["trace_index"]); self.assertEqual(p["input_write_time"],attempt["writes"][0]["write"])
+            self.assertEqual(result["adapter_smoke"],smoke)
+
+    def test_fresh_target_before_submit_is_rejected_causally(self):
+        with tempfile.TemporaryDirectory() as d:
+            result,corpus,_=self._fresh_universal_run(d,TargetBeforeSubmitSession)
+            attempt=result["operations"]["teddy-shipped"]["search"]["attempts"][0]; phases=json.loads(Path(attempt["phase_snapshots"]["path"]).read_text()); target=json.loads(Path(phases["target"]["path"]).read_text()); trace=json.loads(Path(attempt["trace"]["path"]).read_text()); submit=next(e for e in trace if e.get("channel")=="pty_input" and e.get("name")=="submit")
+            self.assertLess(target["trace_event_index"],trace.index(submit))
+            with mock.patch.object(bench,"validate_universal_corpus",return_value=True), self.assertRaises(ValueError): bench.validate_universal_result(result)
+
+    def test_executor_fake_session_full_contract_and_mutations(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d); corpus=root/"tiny"; corpus.write_bytes(b"UBENCH_HEAD_RECORD\nUBENCH_TARGET_RECORD UBENCH_NEEDLE\n"); (root/"teddy-highlight").write_bytes(b"helper")
+            adapters=[]
+            for name in bench.UNIVERSAL_ADAPTER_ORDER:
+                path=root/name; path.write_bytes(name.encode()); spec=bench.UNIVERSAL_ADAPTER_SPEC[name]
+                if name!="vis": (root/name).write_bytes(name.encode())
+                status="REJECTED_UNSUPPORTED" if name=="vis" else ("ALIAS_OF" if name=="vi" else "IDENTITY_QUALIFIED")
+                if name=="vis": path=Path("/usr/bin/vis")
+                h,z=("0"*64,1) if name=="vis" else bench.sha(path)
+                a={"name":name,"status":status,"path":str(path.resolve()),"sha256":h,"size":z,"arch":bench.platform.machine(),"version":"fake","alias_of":"vim" if name=="vi" else None,"argv":bench.universal_adapter_argv(name,path,corpus),"search_prompt":spec["search_prompt"].hex(),"search_submit":spec["search_submit"].hex(),"quit":spec["quit"].hex(),"expected_topology":spec["expected_topology"],"expected_class":spec["expected_class"],"helper_path":str((root/"teddy-highlight").resolve()) if name=="teddy-shipped" else None}; adapters.append(a)
+            vim=next(a for a in adapters if a["name"]=="vim"); vi=next(a for a in adapters if a["name"]=="vi"); vi.update({k:vim[k] for k in ("path","sha256","size","arch","version")}); vi["argv"]=bench.universal_adapter_argv("vi",vi["path"],corpus)
+            smoke=self._strict_smoke(root/"artifacts",adapters)
+            smoke["records"]["teddy-shipped"]["status"]="PASS"
+            for name in ("vim","hx","kak","less","vi"): smoke["records"][name]={"status":"INCONCLUSIVE","reason":"fake smoke ineligible","attempts":0}
+            teddy=next(a for a in adapters if a["name"]=="teddy-shipped"); group=[{"command":" ".join(teddy["argv"]),"pid":1},{"command":teddy["helper_path"],"pid":2}]
+            with mock.patch.object(bench,"process_group",side_effect=lambda _:(True,[{"command":" ".join(ExecutorFakeSession.current_argv),"pid":1}]+([{"command":teddy["helper_path"],"pid":2}] if ExecutorFakeSession.current_argv[0].endswith("teddy-shipped") else []),None)), mock.patch.object(bench,"validate_universal_corpus",return_value=True):
+                result=bench.execute_universal_schedule(adapters,str(corpus),root/"artifacts",session_cls=ExecutorFakeSession,smoke=smoke)
+                self.assertEqual([a["name"] for a in result["adapters"]],list(bench.UNIVERSAL_ADAPTER_ORDER)); self.assertEqual(set(result["adapter_smoke"]["records"]),set(bench.UNIVERSAL_ADAPTER_ORDER)); self.assertEqual(len(result["schedule"]),140)
+                for op in ("startup","search"): self.assertEqual(len(result["operations"]["teddy-shipped"][op]["warmup_attempts"]),3); self.assertEqual(len(result["operations"]["teddy-shipped"][op]["attempts"]),32); self.assertEqual(len(result["operations"]["nvim"][op]["warmup_attempts"]),3); self.assertEqual(len(result["operations"]["nvim"][op]["attempts"]),32)
+                self.assertEqual(set(result["operations"]),{"teddy-shipped","nvim"}); self.assertTrue(bench.validate_universal_result(result)); self.assertTrue(bench.validate_universal_report(result,bench.universal_report_markdown(result)))
+                def reject(mutate):
+                    bad=json.loads(json.dumps(result)); mutate(bad)
+                    with self.assertRaises(ValueError): bench.validate_universal_result(bad)
+                first=result["operations"]["teddy-shipped"]["startup"]["warmup_attempts"][0]; reject(lambda x:x["schedule"].__setitem__(0,x["schedule"][1])); reject(lambda x:x["adapter_smoke"]["records"].pop("vim")); reject(lambda x:x["operations"]["teddy-shipped"]["startup"]["warmup_attempts"][0]["identity_before"].__setitem__("sha256","0"*64)); reject(lambda x:x["operations"]["teddy-shipped"]["startup"]["warmup_attempts"][0]["identity_after"].__setitem__("path","/wrong")); reject(lambda x:x["operations"]["teddy-shipped"]["startup"]["warmup_attempts"][0]["helper_identity_before"][0].__setitem__("sha256","0"*64)); reject(lambda x:x["operations"]["teddy-shipped"]["startup"]["warmup_attempts"][0]["helper_identity_after"][0].__setitem__("path","/wrong")); reject(lambda x:x["operations"]["teddy-shipped"]["startup"]["warmup_attempts"][0]["topology_evidence"].__setitem__("observed_argvs",[["/wrong"]])); reject(lambda x:x["operations"]["teddy-shipped"]["startup"]["warmup_attempts"][0]["raw_attempt"].__setitem__("sha256","0"*64)); reject(lambda x:x["operations"]["teddy-shipped"]["startup"]["warmup_attempts"][0]["trace"].__setitem__("sha256","0"*64)); reject(lambda x:x["operations"]["teddy-shipped"]["startup"]["warmup_attempts"][0]["phase_snapshots"].__setitem__("sha256","0"*64)); reject(lambda x:x["operations"]["teddy-shipped"]["search"]["attempts"][0].__setitem__("endpoint_event_index",0))
+
+                def phase_reject(field, value):
+                    bad=json.loads(json.dumps(result)); attempt=bad["operations"]["teddy-shipped"]["search"]["attempts"][0]; mp=json.loads(Path(attempt["phase_snapshots"]["path"]).read_text()); phase=next(iter(mp)); desc=mp[phase]; payload=json.loads(Path(desc["path"]).read_text()); payload[field]=value; Path(desc["path"]).write_text(json.dumps(payload,sort_keys=True)+"\n"); desc["sha256"],desc["size"]=bench.sha(desc["path"]); Path(attempt["phase_snapshots"]["path"]).write_text(json.dumps(mp,sort_keys=True)+"\n"); attempt["phase_snapshots"]["sha256"],attempt["phase_snapshots"]["size"]=bench.sha(attempt["phase_snapshots"]["path"]); raw=Path(attempt["raw_attempt"]["path"]); raw.write_text(json.dumps(bench._universal_attempt_projection(attempt),sort_keys=True)+"\n"); attempt["raw_attempt"]["sha256"],attempt["raw_attempt"]["size"]=bench.sha(raw)
+                    with self.assertRaises(ValueError): bench.validate_universal_result(bad)
+                phase_reject("trace_event_index",999999); phase_reject("causal_time",-1.0); phase_reject("rows",["forged"]); phase_reject("associated_input_trace_event_index",999999); phase_reject("input_write_time",-1.0)
+                late=json.loads(json.dumps(result)); late["operations"]["teddy-shipped"]["search"]["attempts"][0]["phase_snapshots"]["sha256"]="0"*64
+                with self.assertRaises(ValueError): bench.validate_universal_result(late)
+                no_output=json.loads(json.dumps(result)); no_output["operations"]["teddy-shipped"]["search"]["attempts"][0]["writes"][0]["at"]=999999.0
+                with self.assertRaises(ValueError): bench.validate_universal_result(no_output)
+                target_early=json.loads(json.dumps(result)); target_early["operations"]["teddy-shipped"]["search"]["attempts"][0]["schedule_index"]-=1
+                with self.assertRaises(ValueError): bench.validate_universal_result(target_early)
+    def test_causal_failure_sessions_and_production_endpoint_api(self):
+        for session_type in (LateOutputSession,NoPromptOutputSession,TargetBeforeSubmitSession):
+            s=session_type(["fake"]); s.spawn("/tmp","/tmp"); head=s.until(lambda sc:sc.contains("UBENCH_HEAD_RECORD"),"startup_head"); self.assertTrue(head["matched"])
+            endpoint=s.write_endpoint(b"/",lambda sc:sc.text()!=list(head["snapshot"]),"prompt")
+            if session_type is NoPromptOutputSession: self.assertFalse(endpoint["matched"])
+            if session_type is TargetBeforeSubmitSession:
+                s.write_endpoint(b"UBENCH_NEEDLE",lambda sc:sc.contains("UBENCH_NEEDLE"),"typed_needle")
+                s.write_endpoint(b"\r",lambda sc:sc.contains("UBENCH_TARGET_RECORD"),"submit")
+                self.assertTrue(any(b"UBENCH_TARGET_RECORD" in bytes.fromhex(e.get("data","")) for e in s.trace_events if e.get("channel")=="pty_output"))
+            s.close()
+        s=bench.Session([]); reader,writer=os.pipe(); s.master=writer; s.t0=time.monotonic(); s.output_events=[]; s.trace_events=[]; s.quiet=lambda:True; s.until=lambda predicate,name,baseline:{"name":name,"matched":True,"matched_at":1.0,"event_index":0,"trace_index":1,"snapshot":[]}
+        endpoint=s.write_endpoint(b"X",lambda sc:True,"direct"); self.assertEqual(endpoint["name"],"direct"); self.assertEqual(endpoint["input_trace_index"],0); os.close(reader); os.close(writer)
+
+    def test_universal_attempt_artifacts_are_materialized_and_bound(self):
+        with tempfile.TemporaryDirectory() as d:
+            result=self._strict_universal_fixture(d); adapter=next(x for x in result["adapters"] if x["name"]=="teddy-shipped"); attempt=result["operations"]["teddy-shipped"]["startup"]["attempts"][0]
+            with mock.patch.object(bench,"validate_universal_corpus",return_value=True): self.assertTrue(bench.validate_universal_attempt(attempt,"startup","b"*64,adapter,result["artifact_root"],result["corpus"]["path"]))
+            bad=json.loads(json.dumps(attempt)); bad["identity"]["verified"]=False
+            with mock.patch.object(bench,"validate_universal_corpus",return_value=True): self.assertFalse(bench.validate_universal_attempt(bad,"startup","b"*64,adapter,result["artifact_root"],result["corpus"]["path"]))
+
+    def _strict_universal_fixture(self, root):
+        root=Path(root); corpus=str(root/"corpus"); adapters=[]
+        for name in bench.UNIVERSAL_ADAPTER_ORDER:
+            spec=bench.UNIVERSAL_ADAPTER_SPEC[name]; path="/usr/bin/vis" if name=="vis" else str(root/name)
+            if name!="vis": (root/name).write_bytes(name.encode())
+            status="REJECTED_UNSUPPORTED" if name=="vis" else ("ALIAS_OF" if name=="vi" else "IDENTITY_QUALIFIED")
+            adapters.append({"name":name,"status":status,"path":path,"sha256":"a"*64,"size":10,"arch":"arm64","version":"v1","alias_of":"vim" if name=="vi" else None,"argv":bench.universal_adapter_argv(name,path,corpus),"search_prompt":spec["search_prompt"].hex(),"search_submit":spec["search_submit"].hex(),"quit":spec["quit"].hex(),"expected_topology":spec["expected_topology"],"expected_class":spec["expected_class"],"helper_path":str(root/"teddy-highlight") if name=="teddy-shipped" else None})
+        helper=root/"teddy-highlight"; helper.write_bytes(b"helper")
+        for x in adapters:
+            if x["name"]!="vis": x["sha256"],x["size"]=bench.sha(x["path"])
+        vim=next(x for x in adapters if x["name"]=="vim"); vi=next(x for x in adapters if x["name"]=="vi"); vi.update({k:vim[k] for k in ("path","sha256","size","arch","version")}); vi["argv"]=bench.universal_adapter_argv("vi",vi["path"],corpus)
+        def put(rel,data):
+            p=root/rel; p.parent.mkdir(parents=True,exist_ok=True); p.write_bytes(data); h,z=bench.sha(p); return {"path":str(p),"sha256":h,"size":z}
+        def attempt(adapter,op,block,rep,warmup,index):
+            target=op=="search"; expected=[adapter["argv"]]+([[adapter["helper_path"]]] if adapter["helper_path"] else [])
+            topo={"expected_argvs":expected,"observed_argvs":expected,"unexpected":False,"descendants":[],"pgid_before":[{"command":" ".join(x),"pid":i+1} for i,x in enumerate(expected)],"pgid_after":[]}
+            process={"exit":0,"signal":None,"reaped":True,"pty_eof":True,"stderr_eof":True,"drain_complete":True,"drain_deadline":False,"cleanup_error":None,"pgid_after":[],"descendants_left":False,"timed_out":False,"output_capped":False,"stderr_capped":False,"unsupported":[],"exec_failed":False}
+            chunks=[b"UBENCH_HEAD_RECORD\n"] if not target else [b"UBENCH_HEAD_RECORD\n",b"PROMPT\n",b"PROMPT UBENCH_NEEDLE\n",b"UBENCH_TARGET_RECORD UBENCH_NEEDLE\n"]
+            trace=[]; screens=[]; output_indices=[]; clock=1.0
+            for n,chunk in enumerate(chunks):
+                trace += [{"channel":"pty_output_raw","at":clock,"data":chunk.hex()},{"channel":"pty_output","at":clock,"data":chunk.hex()}]; output_indices.append(len(trace)-1)
+                model=bench.Screen(200,50)
+                for e in trace:
+                    if e["channel"]=="pty_output": model.feed(bytes.fromhex(e["data"]))
+                screens.append(model.text()); clock+=1.0
+                if target and n<3:
+                    names=("prompt","typed_needle","submit"); data=(adapter["search_prompt"],"5542454e43485f4e4545444c45",adapter["search_submit"])[n]; trace.append({"channel":"pty_input","at":clock,"data":data,"action":True,"name":names[n]}); clock+=1.0
+            trace.append({"channel":"pty_input","at":clock,"data":adapter["quit"],"action":True,"name":"quit"})
+            writes=[{"name":e["name"],"bytes":e["data"],"at":e["at"],"write":e["at"],"trace_index":i} for i,e in enumerate(trace) if e.get("channel")=="pty_input"]; actions=[dict(w) for w in writes]; final=screens[-1]; endpoint_n=len(chunks)-1
+            ts={"pre_fork_ms":0.0,"endpoint_ms":(1+endpoint_n*2)*1000,"quiet_complete_ms":(2+endpoint_n*2)*1000,"elapsed_ms":(1 if not target else 1)*1000}; ts.update({"prompt_start_ms":2000.0,"prompt_echo_ms":3000.0,"submit_ms":6000.0} if target else {})
+            ident={"path":str(Path(adapter["path"]).resolve()),"sha256":adapter["sha256"],"size":adapter["size"],"arch":adapter["arch"],"version":adapter["version"],"verified":True}; helpers=[] if not adapter["helper_path"] else [{"path":str(Path(adapter["helper_path"]).resolve()),"sha256":bench.sha(adapter["helper_path"])[0],"size":bench.sha(adapter["helper_path"])[1],"verified":True}]
+            a={"schema":"teddy-s9-universal-attempt-1","operation":op,"adapter":adapter["name"],"adapter_identity":adapter,"argv":adapter["argv"],"invocation_class":adapter["expected_class"],"topology":adapter["expected_topology"],"schedule_index":index,"execution_state":"completed","block":block,"rep":rep,"warmup":warmup,"corpus_path":corpus,"corpus_before_sha256":"b"*64,"corpus_after_sha256":"b"*64,"timestamps":ts,"elapsed_ms":ts["elapsed_ms"],"endpoint":"UBENCH_TARGET_RECORD" if target else "UBENCH_HEAD_RECORD","endpoint_snapshot":final,"endpoint_event_index":endpoint_n,"endpoint_at":float(1+endpoint_n*2),"prompt_echo":target,"prompt_screen":screens[1] if target else [],"typed_needle":screens[2] if target else [],"writes":writes,"actions":actions,"harness_traffic":[],"process":process,"topology_evidence":topo,"identity":{"verified":True,"argv":adapter["argv"],"before":ident,"after":ident},"identity_before":ident,"identity_after":ident,"helper_identity_before":helpers,"helper_identity_after":helpers,"valid":True,"status":"PASS"}
+            phases={}
+            for n,name in enumerate(("startup_head",) if not target else ("startup_head","prompt","typed_needle","target")):
+                inp=None if n==0 else writes[n-1]; phases[name]={"phase":name,"matched":True,"missing":False,"rows":screens[n],"output_event_ordinal":n,"trace_event_index":output_indices[n],"causal_time":float(1+n*2),"associated_input_trace_event_index":None if inp is None else inp["trace_index"],"input_write_time":None if inp is None else inp["at"]}
+            key=f"artifacts/{adapter['name']}-{op}-{block}-{rep}-{index}"; a["trace"]=put(key+".trace",json.dumps(trace).encode()); a["stderr"]=put(key+".stderr",b""); a["full_screen"]=put(key+".screen",("\n".join(final)+"\n").encode()); a["endpoint_screen"]=put(key+".endpoint",json.dumps({"rows":final,"event_index":endpoint_n,"at":a["endpoint_at"]}).encode()); a["process_topology"]=put(key+".topology",json.dumps(topo,sort_keys=True).encode()); phase_map={name:put(key+".phase-"+name,json.dumps(payload,sort_keys=True).encode()) for name,payload in phases.items()}; a["phase_snapshots"]=put(key+".phase-map",json.dumps(phase_map,sort_keys=True).encode()); raw=root/(key+".raw"); raw.write_text(json.dumps(bench._universal_attempt_projection(a),sort_keys=True)+"\n"); rb=raw.read_bytes(); a["raw_attempt"]={"path":str(raw),"sha256":hashlib.sha256(rb).hexdigest(),"size":len(rb)}; return a
+        eligible=[a for a in adapters if a["status"]=="IDENTITY_QUALIFIED"]; schedule=bench.universal_schedule([a["name"] for a in eligible])
+        operations={a["name"]:{op:{"warmup_attempts":[],"attempts":[]} for op in ("startup","search")} for a in eligible}
+        for item in schedule:
+            a=next(x for x in adapters if x["name"]==item["adapter"]); value=attempt(a,item["operation"],item["block"],item["rep"],item["warmup"],item["index"]); operations[a["name"]][item["operation"]]["warmup_attempts" if item["warmup"] else "attempts"].append(value)
+        for values in (v for ops in operations.values() for v in ops.values()): values.update(bench.universal_metric(values["attempts"]))
+        return {"schema":bench.UNIVERSAL_SCHEMA,"phase":"universal-comparison","execution_state":"completed","artifact_root":{"path":str(root)},"geometry":[200,50],"warmups":3,"blocks":2,"repetitions_per_block":16,"corpus":{"path":corpus,"size":1<<30,"record_bytes":64,"records":1<<24,"sha256":"b"*64,"head_marker":"UBENCH_HEAD_RECORD","needle":"UBENCH_NEEDLE","target_marker":"UBENCH_TARGET_RECORD","tail_marker":"UBENCH_TAIL_RECORD","head_offset":0,"target_offset":512<<20,"needle_offset":512<<20+len("UBENCH_TARGET_RECORD "),"tail_offset":(1<<30)-64,"stream_marker":"64-byte-LF-records-v1","read_only_mode":"0o444"},"adapters":adapters,"adapter_smoke":self._strict_smoke(root,adapters),"operations":operations,"schedule":schedule,"contract_only":False}
+
+    def _probe_attempt(self, attempt, root, label, mutate):
+        """Deep-copy an attempt, mutate it, and re-materialize its raw artifact.
+
+        Rehashing into a probe-private path matters: without it a probe would
+        be rejected by the raw-hash binding rather than by the check it aims
+        at, and would keep passing even after that check was deleted.
+        """
+        a=json.loads(json.dumps(attempt)); mutate(a)
+        p=Path(root)/f"oracle-probe-{label}.raw"; p.write_text(json.dumps(bench._universal_attempt_projection(a),sort_keys=True)+"\n")
+        h,z=bench.sha(p); a["raw_attempt"]={"path":str(p),"sha256":h,"size":z}; return a
+
+    def test_oracle_mutation_probes_are_rejected(self):
+        """Phase 1 execution gate: forged evidence must not survive validation.
+
+        Each probe reproduces a hole that was live before this suite existed.
+        A probe that starts passing means the corresponding check was weakened,
+        so `compare --allow-large --execute` is no longer safe to run.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            result=self._strict_universal_fixture(d); root=result["artifact_root"]["path"]
+            adapter=next(x for x in result["adapters"] if x["name"]=="teddy-shipped")
+            attempt=result["operations"]["teddy-shipped"]["startup"]["attempts"][0]
+            args=("startup","b"*64,adapter,result["artifact_root"],result["corpus"]["path"])
+            with mock.patch.object(bench,"validate_universal_corpus",return_value=True):
+                # Baseline: the unmutated fixture is genuinely accepted, so every
+                # rejection below is attributable to its mutation.
+                self.assertTrue(bench.validate_universal_result(result))
+                self.assertTrue(bench.validate_universal_attempt(attempt,*args))
+
+                # 1. Headline elapsed_ms detached from the validated timestamp
+                #    chain would let arbitrary p50/p95 values become MEASURED.
+                def detach(a): a["elapsed_ms"]=999999.0
+                self.assertFalse(bench.validate_universal_attempt(self._probe_attempt(attempt,root,"elapsed",detach),*args))
+
+                # 1b. A chain shifted so it stays internally consistent (ordering
+                #     and elapsed arithmetic still agree) is caught only by the
+                #     anchor to trace-bound endpoint_at. Without this the check
+                #     above is self-satisfying: it compares a value to its copy.
+                def inflate_endpoint(a):
+                    t=a["timestamps"]; x=t["endpoint_ms"]+50000.0
+                    t["endpoint_ms"]=x; t["quiet_complete_ms"]=x+1000.0
+                    t["elapsed_ms"]=x-t["pre_fork_ms"]; a["elapsed_ms"]=t["elapsed_ms"]
+                self.assertFalse(bench.validate_universal_attempt(self._probe_attempt(attempt,root,"endpoint",inflate_endpoint),*args),"inflated endpoint_ms accepted against an unchanged trace")
+
+                # 1b-ii. The other half of the startup subtraction: moving the
+                #     pre-fork origin earlier inflates elapsed just as well.
+                def move_pre_fork(a):
+                    t=a["timestamps"]; t["pre_fork_ms"]=-50000.0
+                    t["elapsed_ms"]=t["endpoint_ms"]-t["pre_fork_ms"]; a["elapsed_ms"]=t["elapsed_ms"]
+                self.assertFalse(bench.validate_universal_attempt(self._probe_attempt(attempt,root,"prefork",move_pre_fork),*args),"pre_fork_ms moved off the trace clock origin accepted")
+
+                # 1c. Same for search, whose elapsed is endpoint minus submit:
+                #     moving submit_ms alone inflates the reported duration.
+                search=result["operations"]["teddy-shipped"]["search"]["attempts"][0]
+                search_args=("search","b"*64,adapter,result["artifact_root"],result["corpus"]["path"])
+                self.assertTrue(bench.validate_universal_attempt(search,*search_args))
+                def move_submit(a):
+                    t=a["timestamps"]; t["submit_ms"]-=500.0
+                    t["elapsed_ms"]=t["endpoint_ms"]-t["submit_ms"]; a["elapsed_ms"]=t["elapsed_ms"]
+                self.assertFalse(bench.validate_universal_attempt(self._probe_attempt(search,root,"submit",move_submit),*search_args),"submit_ms detached from its action write accepted")
+
+                # 2. Stripped lifecycle fields must not read as a clean exit.
+                stripped=("drain_deadline","cleanup_error","pgid_after","descendants_left","timed_out","output_capped","stderr_capped","unsupported")
+                def strip(a): [a["process"].pop(k) for k in stripped]
+                self.assertFalse(bench.validate_universal_attempt(self._probe_attempt(attempt,root,"lifecycle",strip),*args))
+                for key in stripped:
+                    def drop_one(a,k=key): a["process"].pop(k)
+                    self.assertFalse(bench.validate_universal_attempt(self._probe_attempt(attempt,root,"life-"+key,drop_one),*args),f"missing {key} accepted as clean")
+
+                # 3. A self-attested digest must not stand in for the binary.
+                #    Probed on _universal_adapter_ok directly: forging only the
+                #    result-level digest trips the attempt-level identity
+                #    comparison instead, which would keep this passing even with
+                #    the on-disk rehash removed.
+                forged=json.loads(json.dumps(adapter)); forged["sha256"]="f"*64
+                self.assertFalse(bench._universal_adapter_ok(forged,result["corpus"]["path"]),"declared digest accepted without hashing the binary")
+                # Same check from the other side: the declaration is honest but
+                # the binary on disk was swapped after it was recorded.
+                swapped=json.loads(json.dumps(adapter)); original=Path(swapped["path"]).read_bytes()
+                try:
+                    Path(swapped["path"]).write_bytes(b"substituted-binary")
+                    self.assertFalse(bench._universal_adapter_ok(swapped,result["corpus"]["path"]),"substituted binary accepted against a stale digest")
+                    swapped["sha256"],swapped["size"]=bench.sha(swapped["path"])
+                    self.assertTrue(bench._universal_adapter_ok(swapped,result["corpus"]["path"]),"probe is vacuous unless a truthful declaration is accepted")
+                finally: Path(swapped["path"]).write_bytes(original)
+
+                # 4. `signal` is checked by value, so a deleted key also reads
+                #    as "no signal" unless presence is required separately.
+                def drop_signal(a): a["process"].pop("signal")
+                self.assertFalse(bench.validate_universal_attempt(self._probe_attempt(attempt,root,"signal",drop_signal),*args),"missing signal accepted as unsignalled")
+
+                # 4b. Smoke PASS gates measurement eligibility, so the same
+                #     presence discipline must hold on the smoke path.
+                for field in ("signal","drain_deadline","timed_out"):
+                    stripped_smoke=json.loads(json.dumps(result)); stripped_smoke["adapter_smoke"]["records"]["teddy-shipped"]["process"].pop(field)
+                    with self.assertRaises(ValueError,msg=f"smoke record missing {field} accepted"): bench.validate_universal_result(stripped_smoke)
+
+                # 5. A result carrying measured attempts must not simultaneously
+                #    claim it was never executed.
+                contradictory=json.loads(json.dumps(result)); contradictory["execution_state"]="not_started"
+                with self.assertRaises(ValueError): bench.validate_universal_result(contradictory)
+
+                # 6. A contract-only scaffold has no schedule to bind attempts
+                #    to, so it must never carry attempts that reach a metric.
+                scaffold=json.loads(json.dumps(result)); scaffold.update({"contract_only":True,"execution_state":"not_started","schedule":[]})
+                measured=sum(v.get("status")=="MEASURED" for ops in scaffold["operations"].values() for v in ops.values())
+                self.assertTrue(measured, "probe is vacuous unless the fixture actually derives MEASURED metrics")
+                with self.assertRaises(ValueError): bench.validate_universal_result(scaffold)
+
+    def test_universal_materialized_full_matrix_and_baseline_mutations(self):
+        with tempfile.TemporaryDirectory() as d:
+            result=self._strict_universal_fixture(d); with_corpus=mock.patch.object(bench,"validate_universal_corpus",return_value=True)
+            with with_corpus: self.assertTrue(bench.validate_universal_result(result))
+            missing_phases=json.loads(json.dumps(result)); del missing_phases["operations"]["teddy-shipped"]["startup"]["attempts"][0]["phase_snapshots"]
+            with mock.patch.object(bench,"validate_universal_corpus",return_value=True):
+                with self.assertRaises(ValueError): bench.validate_universal_result(missing_phases)
+            def reject(mutate):
+                value=json.loads(json.dumps(result)); mutate(value)
+                with mock.patch.object(bench,"validate_universal_corpus",return_value=True):
+                    with self.assertRaises(ValueError): bench.validate_universal_result(value)
+                first=result["operations"]["teddy-shipped"]["startup"]["warmup_attempts"][0]; reject(lambda x:x["schedule"].__setitem__(0,x["schedule"][1])); reject(lambda x:x["adapter_smoke"]["records"].pop("vim")); reject(lambda x:x["operations"]["teddy-shipped"]["startup"]["warmup_attempts"][0]["identity_before"].__setitem__("sha256","0"*64)); reject(lambda x:x["operations"]["teddy-shipped"]["startup"]["warmup_attempts"][0]["identity_after"].__setitem__("path","/wrong")); reject(lambda x:x["operations"]["teddy-shipped"]["startup"]["warmup_attempts"][0]["helper_identity_before"][0].__setitem__("sha256","0"*64)); reject(lambda x:x["operations"]["teddy-shipped"]["startup"]["warmup_attempts"][0]["helper_identity_after"][0].__setitem__("path","/wrong")); reject(lambda x:x["operations"]["teddy-shipped"]["startup"]["warmup_attempts"][0]["topology_evidence"].__setitem__("observed_argvs",[["/wrong"]])); reject(lambda x:x["operations"]["teddy-shipped"]["startup"]["warmup_attempts"][0]["raw_attempt"].__setitem__("sha256","0"*64)); reject(lambda x:x["operations"]["teddy-shipped"]["startup"]["warmup_attempts"][0]["trace"].__setitem__("sha256","0"*64)); reject(lambda x:x["operations"]["teddy-shipped"]["startup"]["warmup_attempts"][0]["phase_snapshots"].__setitem__("sha256","0"*64)); reject(lambda x:x["operations"]["teddy-shipped"]["search"]["attempts"][0].__setitem__("endpoint_event_index",0))
 
     def _materialized_phase2_fixture(self, directory):
         source=Path(__file__).parents[1]/"results"/"canonical.json"

@@ -1,0 +1,388 @@
+{
+  "adapter_smoke": {
+    "corpus": "/Users/kriant/w/teddy/bench/artifacts/comparison-20260806T031258Z-4f252445fe/corpus/smoke.txt",
+    "records": {
+      "hx": {
+        "attempts": 0,
+        "reason": "Contract-only scaffold: smoke was not executed in this published result",
+        "status": "INCONCLUSIVE"
+      },
+      "kak": {
+        "attempts": 0,
+        "reason": "Contract-only scaffold: smoke was not executed in this published result",
+        "status": "INCONCLUSIVE"
+      },
+      "less": {
+        "attempts": 0,
+        "reason": "Contract-only scaffold: smoke was not executed in this published result",
+        "status": "INCONCLUSIVE"
+      },
+      "nvim": {
+        "attempts": 0,
+        "reason": "Contract-only scaffold: smoke was not executed in this published result",
+        "status": "INCONCLUSIVE"
+      },
+      "teddy-shipped": {
+        "attempts": 0,
+        "reason": "Contract-only scaffold: smoke was not executed in this published result",
+        "status": "INCONCLUSIVE"
+      },
+      "vi": {
+        "attempts": 0,
+        "reason": "not an identity-qualified participant",
+        "status": "ALIAS_OF"
+      },
+      "vim": {
+        "attempts": 0,
+        "reason": "Contract-only scaffold: smoke was not executed in this published result",
+        "status": "INCONCLUSIVE"
+      },
+      "vis": {
+        "attempts": 0,
+        "reason": "not an identity-qualified participant",
+        "status": "REJECTED_UNSUPPORTED"
+      }
+    }
+  },
+  "adapters": [
+    {
+      "alias_of": null,
+      "arch": "arm64",
+      "argv": [
+        "/Users/kriant/w/teddy/bench/artifacts/comparison-20260806T031258Z-4f252445fe/profiles/shipped/teddy",
+        "/Users/kriant/w/teddy/bench/artifacts/comparison-20260806T031258Z-4f252445fe/corpus/universal-1g.bin"
+      ],
+      "expected_class": "editor",
+      "expected_topology": "staged-teddy-helper",
+      "helper_path": "/Users/kriant/w/teddy/bench/artifacts/comparison-20260806T031258Z-4f252445fe/profiles/shipped/teddy-highlight",
+      "name": "teddy-shipped",
+      "path": "/Users/kriant/w/teddy/bench/artifacts/comparison-20260806T031258Z-4f252445fe/profiles/shipped/teddy",
+      "quit": "11",
+      "search_prompt": "06",
+      "search_submit": "0d",
+      "sha256": "504355fe118ae679dffa881433386bb050e9160ca67962f84380c0a204edb1e1",
+      "size": 471712,
+      "status": "IDENTITY_QUALIFIED",
+      "version": "teddy 0.2.0"
+    },
+    {
+      "alias_of": null,
+      "arch": "arm64",
+      "argv": [
+        "/opt/homebrew/Cellar/neovim/0.12.2/bin/nvim",
+        "--clean",
+        "-R",
+        "--",
+        "/Users/kriant/w/teddy/bench/artifacts/comparison-20260806T031258Z-4f252445fe/corpus/universal-1g.bin"
+      ],
+      "expected_class": "editor",
+      "expected_topology": "single-process",
+      "helper_path": null,
+      "name": "nvim",
+      "path": "/opt/homebrew/Cellar/neovim/0.12.2/bin/nvim",
+      "quit": "3a7161210d",
+      "search_prompt": "2f",
+      "search_submit": "0d",
+      "sha256": "d3c3ac14d241e471cee015d093ad8f7fa41d1bcda69ca142c3b3e63a7d71b07d",
+      "size": 4278576,
+      "status": "IDENTITY_QUALIFIED",
+      "version": "NVIM v0.12.2"
+    },
+    {
+      "alias_of": null,
+      "arch": "arm64",
+      "argv": [
+        "/usr/bin/vim",
+        "--clean",
+        "-R",
+        "-i",
+        "NONE",
+        "-U",
+        "NONE",
+        "--",
+        "/Users/kriant/w/teddy/bench/artifacts/comparison-20260806T031258Z-4f252445fe/corpus/universal-1g.bin"
+      ],
+      "expected_class": "editor",
+      "expected_topology": "single-process",
+      "helper_path": null,
+      "name": "vim",
+      "path": "/usr/bin/vim",
+      "quit": "3a7161210d",
+      "search_prompt": "2f",
+      "search_submit": "0d",
+      "sha256": "0e7f7d3ff46a0ab745a3d2a987505524fa40735f36ebb7495a1764892a59df1f",
+      "size": 5651232,
+      "status": "IDENTITY_QUALIFIED",
+      "version": "VIM - Vi IMproved 9.1 (2024 Jan 02, compiled Apr 18 2026 20:29:32)"
+    },
+    {
+      "alias_of": null,
+      "arch": "arm64",
+      "argv": [
+        "/opt/homebrew/Cellar/helix/25.07.1/bin/hx",
+        "--config",
+        "/dev/null",
+        "--",
+        "/Users/kriant/w/teddy/bench/artifacts/comparison-20260806T031258Z-4f252445fe/corpus/universal-1g.bin"
+      ],
+      "expected_class": "editor",
+      "expected_topology": "single-process",
+      "helper_path": null,
+      "name": "hx",
+      "path": "/opt/homebrew/Cellar/helix/25.07.1/bin/hx",
+      "quit": "3a7161210d",
+      "search_prompt": "2f",
+      "search_submit": "0d",
+      "sha256": "dc1e5d1c9d414e2cfab872a4595c0128eb92c2d9fdf1636a7026e421bba47ce8",
+      "size": 26452848,
+      "status": "IDENTITY_QUALIFIED",
+      "version": "helix 25.07.1 (a05c151b)"
+    },
+    {
+      "alias_of": null,
+      "arch": "arm64",
+      "argv": [
+        "/opt/homebrew/Cellar/kakoune/2026.05.21/bin/kak",
+        "-n",
+        "-ro",
+        "-ui",
+        "terminal",
+        "--",
+        "/Users/kriant/w/teddy/bench/artifacts/comparison-20260806T031258Z-4f252445fe/corpus/universal-1g.bin"
+      ],
+      "expected_class": "editor",
+      "expected_topology": "server",
+      "helper_path": null,
+      "name": "kak",
+      "path": "/opt/homebrew/Cellar/kakoune/2026.05.21/bin/kak",
+      "quit": "3a710d",
+      "search_prompt": "2f",
+      "search_submit": "0d",
+      "sha256": "94124dff525353c1f8320d2a75c0d9755b16791d14305f9e07dadc04cf31113d",
+      "size": 2599480,
+      "status": "IDENTITY_QUALIFIED",
+      "version": "Kakoune 2026.05.21"
+    },
+    {
+      "alias_of": null,
+      "arch": "arm64",
+      "argv": [
+        "/opt/homebrew/Cellar/less/704/bin/less",
+        "-n",
+        "-L",
+        "--",
+        "/Users/kriant/w/teddy/bench/artifacts/comparison-20260806T031258Z-4f252445fe/corpus/universal-1g.bin"
+      ],
+      "expected_class": "pager",
+      "expected_topology": "pager",
+      "helper_path": null,
+      "name": "less",
+      "path": "/opt/homebrew/Cellar/less/704/bin/less",
+      "quit": "71",
+      "search_prompt": "2f",
+      "search_submit": "0d",
+      "sha256": "8ad5a03aefdc264fb6b0bf5615a6dad02ac8de5a61c83a2e13e9df06defb234b",
+      "size": 264944,
+      "status": "IDENTITY_QUALIFIED",
+      "version": "less 704 (PCRE2 regular expressions)"
+    },
+    {
+      "alias_of": "vim",
+      "arch": "arm64",
+      "argv": [
+        "/usr/bin/vim",
+        "--clean",
+        "-R",
+        "-i",
+        "NONE",
+        "-U",
+        "NONE",
+        "--",
+        "/Users/kriant/w/teddy/bench/artifacts/comparison-20260806T031258Z-4f252445fe/corpus/universal-1g.bin"
+      ],
+      "expected_class": "editor",
+      "expected_topology": "single-process",
+      "helper_path": null,
+      "name": "vi",
+      "path": "/usr/bin/vim",
+      "quit": "3a7161210d",
+      "search_prompt": "2f",
+      "search_submit": "0d",
+      "sha256": "0e7f7d3ff46a0ab745a3d2a987505524fa40735f36ebb7495a1764892a59df1f",
+      "size": 5651232,
+      "status": "ALIAS_OF",
+      "version": "VIM - Vi IMproved 9.1 (2024 Jan 02, compiled Apr 18 2026 20:29:32)"
+    },
+    {
+      "alias_of": null,
+      "arch": "arm64",
+      "argv": [
+        "/usr/bin/vis",
+        "/Users/kriant/w/teddy/bench/artifacts/comparison-20260806T031258Z-4f252445fe/corpus/universal-1g.bin"
+      ],
+      "expected_class": "editor",
+      "expected_topology": "single-process",
+      "helper_path": null,
+      "name": "vis",
+      "path": "/usr/bin/vis",
+      "quit": "11",
+      "search_prompt": "2f",
+      "search_submit": "0d",
+      "sha256": "3249eebe64f7401e908b241990a51bde865c0a3b5176318790358ce954068d69",
+      "size": 118256,
+      "status": "REJECTED_UNSUPPORTED",
+      "version": {
+        "exit": 1,
+        "stderr": "/usr/bin/vis: illegal option -- -\nUsage: vis [-bcfhlMmNnoSstw] [-e extra] [-F foldwidth] [file ...]\n",
+        "stdout": ""
+      }
+    }
+  ],
+  "artifact_root": {
+    "path": "bench/artifacts/comparison-20260806T031258Z-4f252445fe"
+  },
+  "blocks": 2,
+  "c1_c5_isolation": "Universal comparison is non-claim evidence and cannot modify Teddy C1-C5.",
+  "command": "python3 bench/bench.py compare --allow-large",
+  "contract_only": true,
+  "corpus": {
+    "head_marker": "UBENCH_HEAD_RECORD",
+    "head_offset": 0,
+    "needle": "UBENCH_NEEDLE",
+    "needle_offset": 536870933,
+    "path": "/Users/kriant/w/teddy/bench/artifacts/comparison-20260806T031258Z-4f252445fe/corpus/universal-1g.bin",
+    "read_only_mode": "0o444",
+    "record_bytes": 64,
+    "records": 16777216,
+    "sha256": "40da09f1ef207e3f30b56fe69629fced90bc17b928727f6f4cca74d22a16a99f",
+    "size": 1073741824,
+    "stream_marker": "64-byte-LF-records-v1",
+    "tail_marker": "UBENCH_TAIL_RECORD",
+    "tail_offset": 1073741760,
+    "target_marker": "UBENCH_TARGET_RECORD",
+    "target_offset": 536870912
+  },
+  "execution_state": "not_started",
+  "geometry": [
+    200,
+    50
+  ],
+  "limitations": [
+    "Contract-only scaffold: no participant metric attempts were executed; Phase 2 must execute the declared matrix"
+  ],
+  "operations": {
+    "hx": {
+      "search": {
+        "attempts": [],
+        "p50_ms": null,
+        "p95_ms": null,
+        "repetitions": 0,
+        "status": "INCONCLUSIVE",
+        "warmup_attempts": []
+      },
+      "startup": {
+        "attempts": [],
+        "p50_ms": null,
+        "p95_ms": null,
+        "repetitions": 0,
+        "status": "INCONCLUSIVE",
+        "warmup_attempts": []
+      }
+    },
+    "kak": {
+      "search": {
+        "attempts": [],
+        "p50_ms": null,
+        "p95_ms": null,
+        "repetitions": 0,
+        "status": "INCONCLUSIVE",
+        "warmup_attempts": []
+      },
+      "startup": {
+        "attempts": [],
+        "p50_ms": null,
+        "p95_ms": null,
+        "repetitions": 0,
+        "status": "INCONCLUSIVE",
+        "warmup_attempts": []
+      }
+    },
+    "less": {
+      "search": {
+        "attempts": [],
+        "p50_ms": null,
+        "p95_ms": null,
+        "repetitions": 0,
+        "status": "INCONCLUSIVE",
+        "warmup_attempts": []
+      },
+      "startup": {
+        "attempts": [],
+        "p50_ms": null,
+        "p95_ms": null,
+        "repetitions": 0,
+        "status": "INCONCLUSIVE",
+        "warmup_attempts": []
+      }
+    },
+    "nvim": {
+      "search": {
+        "attempts": [],
+        "p50_ms": null,
+        "p95_ms": null,
+        "repetitions": 0,
+        "status": "INCONCLUSIVE",
+        "warmup_attempts": []
+      },
+      "startup": {
+        "attempts": [],
+        "p50_ms": null,
+        "p95_ms": null,
+        "repetitions": 0,
+        "status": "INCONCLUSIVE",
+        "warmup_attempts": []
+      }
+    },
+    "teddy-shipped": {
+      "search": {
+        "attempts": [],
+        "p50_ms": null,
+        "p95_ms": null,
+        "repetitions": 0,
+        "status": "INCONCLUSIVE",
+        "warmup_attempts": []
+      },
+      "startup": {
+        "attempts": [],
+        "p50_ms": null,
+        "p95_ms": null,
+        "repetitions": 0,
+        "status": "INCONCLUSIVE",
+        "warmup_attempts": []
+      }
+    },
+    "vim": {
+      "search": {
+        "attempts": [],
+        "p50_ms": null,
+        "p95_ms": null,
+        "repetitions": 0,
+        "status": "INCONCLUSIVE",
+        "warmup_attempts": []
+      },
+      "startup": {
+        "attempts": [],
+        "p50_ms": null,
+        "p95_ms": null,
+        "repetitions": 0,
+        "status": "INCONCLUSIVE",
+        "warmup_attempts": []
+      }
+    }
+  },
+  "phase": "universal-comparison",
+  "repetitions_per_block": 16,
+  "schedule": [],
+  "schema": "teddy-s9-universal-comparison-1",
+  "warmups": 3
+}

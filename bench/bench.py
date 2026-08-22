@@ -11,8 +11,38 @@ PHASE="phase1"; RESULT_SCHEMA="teddy-s9-phase1-result-5"; MANIFEST_SCHEMA="teddy
 PHASE2_SCHEMA="teddy-s9-phase2-result-2"
 PHASE2_METHODOLOGY="s9-c1-post-readiness-observer-1"
 PHASE2_HISTORICAL_CONTEXT="The prior canonical Phase 2 C1 result was FAIL and used pre-drain identity/PGID observation; it remains immutable historical context and is not silently overwritten."
+UNIVERSAL_SCHEMA="teddy-s9-universal-comparison-1"
+UNIVERSAL_ADAPTER_ORDER=("teddy-shipped","nvim","vim","hx","kak","less","vi","vis")
+UNIVERSAL_MEASURED_REPS=32
+UNIVERSAL_WARMUPS=3
+UNIVERSAL_BLOCKS=2
 PHASE2_ENV_ALLOWLIST={"LANG","LC_ALL","LC_CTYPE","TERM","TZ","XDG_CONFIG_HOME","XDG_DATA_HOME","XDG_STATE_HOME","XDG_CACHE_HOME","TMPDIR"}
 CLAIMS={c:{"status":"NOT_MEASURED","reason":"Phase 1 measures harness health only"} for c in "C1 C2 C3 C4 C5".split()}
+
+# This is deliberately data, rather than a collection of per-editor branches.
+# In particular, Teddy has no read-only command-line switch: its corpus is
+# made read-only on disk and is passed as the documented sole positional path.
+UNIVERSAL_ADAPTER_FIELDS=("name","status","path","sha256","size","arch","version",
+                          "alias_of","argv","search_prompt","search_submit","quit",
+                          "expected_topology","expected_class","helper_path")
+UNIVERSAL_ADAPTER_SPEC={
+    "teddy-shipped":{"argv":lambda p,c:[p,c],"search_prompt":b"\x06",
+        "search_submit":b"\r","quit":b"\x11","expected_topology":"staged-teddy-helper","expected_class":"editor"},
+    "nvim":{"argv":lambda p,c:[p,"--clean","-R","--",c],"search_prompt":b"/",
+        "search_submit":b"\r","quit":b":qa!\r","expected_topology":"single-process","expected_class":"editor"},
+    "vim":{"argv":lambda p,c:[p,"--clean","-R","-i","NONE","-U","NONE","--",c],"search_prompt":b"/",
+        "search_submit":b"\r","quit":b":qa!\r","expected_topology":"single-process","expected_class":"editor"},
+    "hx":{"argv":lambda p,c:[p,"--config","/dev/null","--",c],"search_prompt":b"/",
+        "search_submit":b"\r","quit":b":qa!\r","expected_topology":"single-process","expected_class":"editor"},
+    "kak":{"argv":lambda p,c:[p,"-n","-ro","-ui","terminal","--",c],"search_prompt":b"/",
+        "search_submit":b"\r","quit":b":q\r","expected_topology":"server","expected_class":"editor"},
+    "less":{"argv":lambda p,c:[p,"-n","-L","--",c],"search_prompt":b"/",
+        "search_submit":b"\r","quit":b"q","expected_topology":"pager","expected_class":"pager"},
+    "vi":{"argv":lambda p,c:[p,"--clean","-R","-i","NONE","-U","NONE","--",c],"search_prompt":b"/",
+        "search_submit":b"\r","quit":b":qa!\r","expected_topology":"single-process","expected_class":"editor"},
+    "vis":{"argv":lambda p,c:[p,c],"search_prompt":b"/","search_submit":b"\r","quit":b"\x11",
+        "expected_topology":"single-process","expected_class":"editor"},
+}
 
 def validate_config(config=CORPUS):
     required={"kind","size","sha256","markers","post_edit_sha256"}
@@ -149,17 +179,97 @@ class Screen:
             self.unsupported.append("incomplete-terminal-input:"+self._pending.hex())
             self._pending=b""
 
+def filter_terminal_queries(raw):
+    """Deterministically remove harness terminal queries from raw PTY bytes."""
+    out=bytearray(); i=0; queries=(b"\033[6n",b"\033[c")
+    while i<len(raw):
+        query=next((q for q in queries if raw.startswith(q,i)),None)
+        if query: i+=len(query); continue
+        out.append(raw[i]); i+=1
+    return bytes(out)
+
+def filter_terminal_events(raw_events):
+    """Filter raw PTY events while retaining their event boundaries."""
+    pending=b""; filtered=[]; queries=(b"\033[6n",b"\033[c")
+    for raw in raw_events:
+        pending+=raw; out=bytearray()
+        while pending:
+            query=next((q for q in queries if pending.startswith(q)),None)
+            if query: pending=pending[len(query):]; continue
+            if any(q.startswith(pending) for q in queries): break
+            out.append(pending[0]); pending=pending[1:]
+        filtered.append(bytes(out))
+    if pending: return None
+    return filtered
+
+def validate_trace_provenance(trace, harness_traffic=()):
+    """Validate the raw-to-filtered PTY stream as one causal state machine.
+
+    Raw and filtered output are paired event-for-event; harness replies are the
+    only input permitted while a pair is being completed.  Keeping the query
+    scanner here (rather than comparing concatenated streams) makes split
+    escape-sequence prefixes and event ordering part of the contract.
+    """
+    if not isinstance(trace,list) or not isinstance(harness_traffic,list): return False
+    queries=((b"\033[6n","DSR_REPLY",b"\033[1;1R"),(b"\033[c","DA_REPLY",b"\033[?1;2c"))
+    traffic=[]
+    for item in harness_traffic:
+        if (not isinstance(item,dict) or item.get("deterministic") is not True or
+                item.get("kind") not in {q[1] for q in queries} or
+                not isinstance(item.get("query"),str) or not isinstance(item.get("reply"),str) or
+                not isinstance(item.get("at"),(int,float))):
+            return False
+        traffic.append(item)
+    carry=b""; scan=b""; query_count=0; harness_index=0; raw_seen=0; output_seen=0; last_raw=False
+    i=0
+    try:
+        while i<len(trace):
+            event=trace[i]; channel=event.get("channel")
+            if channel not in {"pty_input","pty_output","pty_output_raw","stderr"} or not isinstance(event.get("at"),(int,float)) or not isinstance(event.get("data"),str): return False
+            if channel=="pty_output_raw":
+                raw_seen+=1; last_raw=True; data=bytes.fromhex(event["data"]); carry+=data; scan+=data; out=bytearray()
+                while carry:
+                    query=next((q for q,_,_ in queries if carry.startswith(q)),None)
+                    if query:
+                        carry=carry[len(query):]; query_count+=1; continue
+                    if any(q.startswith(carry) for q,_,_ in queries): break
+                    out.append(carry[0]); carry=carry[1:]
+                j=i+1
+                while j<len(trace) and trace[j].get("channel")=="pty_input" and trace[j].get("harness") is True:
+                    h=trace[j]
+                    if (harness_index>=len(traffic) or query_count<=harness_index or
+                            traffic[harness_index].get("at")!=event["at"] or
+                            bytes.fromhex(h.get("data",""))!=bytes.fromhex(traffic[harness_index]["reply"])): return False
+                    if h.get("at")!=event["at"]: return False
+                    harness_index+=1; j+=1
+                if j>=len(trace) or trace[j].get("channel")!="pty_output" or trace[j].get("at")!=event["at"] or bytes.fromhex(trace[j]["data"])!=bytes(out): return False
+                output_seen+=1; last_raw=False; i=j+1; continue
+            if channel=="pty_output": return False
+            if channel=="pty_input" and event.get("harness") is True: return False
+            if channel=="pty_input" and last_raw: return False
+            last_raw=False; i+=1
+        if carry or raw_seen==0 or output_seen!=raw_seen or harness_index!=len(traffic): return False
+        # The recorded traffic must describe exactly the queries observed.
+        observed=[]; data=b"".join(bytes.fromhex(e["data"]) for e in trace if e.get("channel")=="pty_output_raw"); pos=0
+        while pos<len(data):
+            found=[(data.find(query,pos),query,kind,reply) for query,kind,reply in queries if data.find(query,pos)>=0]
+            if not found: break
+            at,query,kind,reply=min(found,key=lambda x:x[0]); observed.append((kind,query.hex(),reply.hex())); pos=at+len(query)
+        return [(x.get("kind"),x.get("query"),x.get("reply")) for x in traffic]==observed
+    except (TypeError,ValueError):
+        return False
+
 class Session:
     def __init__(self,argv,geometry=(200,50),timeout=4,output_cap=4<<20,stderr_cap=1<<20):
         self.argv=argv; self.geometry=geometry; self.timeout=timeout; self.output_cap=output_cap; self.stderr_cap=stderr_cap; self.out=bytearray(); self.err=bytearray(); self.trace=bytearray(); self.trace_bytes=0; self.trace_discarded_bytes=0; self.trace_hash=hashlib.sha256(); self.stderr_full_bytes=self.output_full_bytes=0; self.trace_cap=4<<20; self.screen=Screen(*geometry); self.actions=[]; self.endpoint_snapshots=[]; self.output_capped=self.stderr_capped=self.timed_out=False; self.status=None; self.pid=-1; self.root_pid=-1; self.pgid=-1; self.original_pgid=-1; self.closed=False; self.cleanup_error=None; self.drain_reason=None; self.last_output=None; self.first_output=None; self.output_events=[]; self.spawn_at=None; self.descendants=[]; self.pgid_before=[]; self.pgid_after=[]; self.pgid_probe_error=None; self.pgid_before_probe_error=None; self.pgid_after_probe_error=None; self.group_probe_started_ms=None; self.group_probe_finished_ms=None; self.group_probe_ms=None; self.drain_complete=False; self.drain_deadline=False; self.pty_eof=self.stderr_eof=False
-        self.extra_env={}
+        self.extra_env={}; self.harness_traffic=[]; self.trace_events=[]; self._query_scan=b""
     def spawn(self,home,cwd,preflight=True):
-        self.fork_started_wall=time.monotonic(); self.master,self.slave=pty.openpty(); self.er,self.ew=os.pipe(); self.pid=os.fork()
+        self.fork_started_wall=time.monotonic(); self.pre_fork_wall=self.fork_started_wall; self.master,self.slave=pty.openpty(); self.er,self.ew=os.pipe(); self.pid=os.fork()
         if self.pid==0:
             try:
                 os.setsid(); import fcntl,termios; fcntl.ioctl(self.slave,termios.TIOCSCTTY,0); _winsize(self.slave,self.geometry); os.dup2(self.slave,0); os.dup2(self.slave,1); os.dup2(self.ew,2); os.chdir(cwd); env=isolated_env(Path(home)); env.update(self.extra_env); os.execve(self.argv[0],self.argv,env)
             except BaseException: os.write(2,b"S9_EXEC_FAILURE\n"); os._exit(127)
-        os.close(self.slave); os.close(self.ew); self.parent_start_wall=time.monotonic(); _winsize(self.master,self.geometry); os.set_blocking(self.master,False); os.set_blocking(self.er,False); self.t0=time.monotonic(); self.spawn_at=0.0; self.root_pid=self.pid; self.pgid=self.pid; self.original_pgid=self.pid
+        os.close(self.slave); os.close(self.ew); self.parent_start_wall=time.monotonic(); _winsize(self.master,self.geometry); os.set_blocking(self.master,False); os.set_blocking(self.er,False); self.t0=self.pre_fork_wall; self.spawn_at=0.0; self.root_pid=self.pid; self.pgid=self.pid; self.original_pgid=self.pid
         if preflight:
             probe_started=time.monotonic(); self.identity_probe_started_ms=(probe_started-self.t0)*1000; self.identity=self._ps(); self.identity_probe_finished_ms=(time.monotonic()-self.t0)*1000; self.identity_probe_ms=self.identity_probe_finished_ms-self.identity_probe_started_ms
         else:
@@ -173,6 +283,19 @@ class Session:
         if self.pid>0:
             got,st=os.waitpid(self.pid,os.WNOHANG)
             if got:self.status=st; self.pid=-1
+    def _consume_terminal_queries(self,data,now):
+        data=self._query_scan+data; self._query_scan=b""; out=bytearray(); queries=((b"\033[6n",b"\033[1;1R","DSR_REPLY"),(b"\033[c",b"\033[?1;2c","DA_REPLY")); i=0
+        while i<len(data):
+            found=False
+            for query,reply,kind in queries:
+                if data.startswith(query,i):
+                    try: os.write(self.master,reply)
+                    except OSError: pass
+                    self.harness_traffic.append({"kind":kind,"query":query.hex(),"reply":reply.hex(),"deterministic":True,"at":now}); self.trace_events.append({"channel":"pty_input","at":now,"data":reply.hex(),"harness":True}); i+=len(query); found=True; break
+            if found: continue
+            if any(query.startswith(data[i:]) for query,_,_ in queries): self._query_scan=data[i:]; break
+            out.append(data[i]); i+=1
+        return bytes(out)
     def _read(self,wait=.02):
         ready,_,_=select.select([self.master,self.er],[],[],wait)
         now=time.monotonic()-self.t0
@@ -189,7 +312,7 @@ class Session:
                 else: self.stderr_eof=True
                 continue
             if fd==self.master:
-                self.trace_bytes+=len(b); self.output_full_bytes+=len(b); self.trace_hash.update(b); kept=max(0,self.trace_cap-len(self.trace)); self.trace.extend(b[:kept]); self.trace_discarded_bytes+=max(0,len(b)-kept); self.screen.feed(b)
+                self.trace_events.append({"channel":"pty_output_raw","at":now,"data":b.hex()}); screen_bytes=self._consume_terminal_queries(b,now); self.trace_events.append({"channel":"pty_output","at":now,"data":screen_bytes.hex()}); self.trace_bytes+=len(b); self.output_full_bytes+=len(b); self.trace_hash.update(b); kept=max(0,self.trace_cap-len(self.trace)); self.trace.extend(b[:kept]); self.trace_discarded_bytes+=max(0,len(b)-kept); self.screen.feed(screen_bytes)
                 if len(self.out)+len(b)>self.output_cap: self.output_capped=True
                 self.out.extend(b[:max(0,self.output_cap-len(self.out))]); self.last_output=now; self.output_events.append(now)
                 if self.first_output is None: self.first_output=now
@@ -209,7 +332,7 @@ class Session:
             self._read(); self.poll()
             if len(self.output_events)>baseline and predicate(self.screen):
                 event_index=len(self.output_events)-1
-                return {"name":name,"matched":True,"matched_at":self.output_events[event_index],"event_index":event_index,"snapshot":list(self.screen.text())}
+                return {"name":name,"matched":True,"matched_at":self.output_events[event_index],"event_index":event_index,"trace_index":len(self.trace_events)-1,"snapshot":list(self.screen.text())}
             if self.status is not None: return {"name":name,"matched":False,"matched_at":None,"snapshot":None}
         self.timed_out=True; return {"name":name,"matched":False,"matched_at":None,"snapshot":None}
     def ready(self,filename,head):
@@ -222,10 +345,25 @@ class Session:
             if len(self.output_events)!=before: last_byte=self.output_events[-1]; deadline=time.monotonic()+self.t_quiet
         now=time.monotonic(); complete=now>=deadline; self.quiet_at=now-self.t0; self.quiet_complete=self.quiet_at if complete else None; self.last_quiet_gap=self.quiet_at-(self.last_output or 0); return self.status is None and complete
     def write(self,data,expected,name="action"):
-        if not self.quiet(): return False
-        os.write(self.master,data); write=time.monotonic()-self.t0; event_start=len(self.output_events); endpoint=self.until(expected,name,event_start); quiet=self.quiet(); after=self.output_events[event_start:]; first=after[0] if after else None; last=after[-1] if after else None; matched=bool(endpoint.get("matched")); rows=endpoint.get("snapshot") if matched else self.screen.text()
-        rows=rows if isinstance(rows,list) else self.screen.text(); snap={"name":endpoint["name"],"at":endpoint.get("matched_at"),"kind":"action","rows":rows,"sha256":hashlib.sha256("\n".join(rows).encode()).hexdigest()}; self.endpoint_snapshots.append(snap)
-        self.actions.append({"name":snap["name"],"write":write,"output_event_sequence_at_write":event_start,"first_output_after_write":first,"endpoint":endpoint.get("matched_at"),"endpoint_event_index":endpoint.get("event_index"),"last_output":last,"quiet_complete":self.quiet_at,"quiet_gap":self.last_quiet_gap,"output_event_count":len(after),"endpoint_found":matched,"bytes":data.hex()}); return matched
+        return self.write_endpoint(data,expected,name).get("matched") is True
+    def send_action(self,data,name="action"):
+        """Atomically record a PTY input action and its output baseline."""
+        if not self.quiet(): return {"name":name,"bytes":data.hex(),"write":None,"trace_index":None,"output_baseline":len(self.output_events),"failed":"not_quiet"}
+        baseline=len(self.output_events)
+        # This is the causal pre-write snapshot: quiet() has just completed and
+        # no input has been written since it was captured.
+        pre_write_screen=list(self.screen.text())
+        os.write(self.master,data); write=time.monotonic()-self.t0; trace_index=len(self.trace_events); self.trace_events.append({"channel":"pty_input","at":write,"data":data.hex(),"action":True,"name":name})
+        return {"name":name,"bytes":data.hex(),"write":write,"trace_index":trace_index,"output_baseline":baseline,"pre_write_screen":pre_write_screen}
+    def write_endpoint(self,data,predicate,name="action"):
+        action=self.send_action(data,name); baseline=action.get("output_baseline",len(self.output_events))
+        def endpoint_predicate(screen):
+            try: return predicate(screen,action.get("pre_write_screen"))
+            except TypeError: return predicate(screen)
+        endpoint=self.until(endpoint_predicate,name,baseline) if action.get("trace_index") is not None else {"name":name,"matched":False,"failure":action.get("failed")}
+        output_after=self.output_events[baseline:]; match=endpoint.get("matched") is True; first=output_after[0] if output_after else None
+        action.update({"first_post_write_output":first,"first_output_after_write":first,"last_output":output_after[-1] if output_after else None,"matched":match,"matched_at":endpoint.get("matched_at"),"endpoint":endpoint.get("matched_at"),"output_event_index":endpoint.get("event_index"),"endpoint_event_index":endpoint.get("event_index"),"trace_output_index":endpoint.get("trace_index"),"input_trace_index":action.get("trace_index"),"input_trace_time":action.get("write"),"snapshot":endpoint.get("snapshot"),"quiet_complete":None,"quiet_gap":None,"output_event_count":len(output_after),"endpoint_found":match})
+        self.quiet(); action["quiet_complete"]=getattr(self,"quiet_at",None); action["quiet_gap"]=getattr(self,"last_quiet_gap",None); action["failure"]=None if match else "endpoint_not_observed"; self.actions.append(action); self.endpoint_snapshots.append({"name":name,"at":action.get("matched_at"),"kind":"action","rows":action.get("snapshot") or []}); return action
     def close(self):
         if self.closed:return True
         clean=False
@@ -272,7 +410,7 @@ class Session:
         st=self.status; exited=st is not None and os.WIFEXITED(st)
         exit_code=os.WEXITSTATUS(st) if st is not None and exited else None
         sig=os.WTERMSIG(st) if st is not None and not exited else None
-        return {"spawn":self.spawn_at,"readiness":getattr(self,"readiness",None),"exit":exit_code,"signal":sig,"timed_out":self.timed_out,"pty_output_capped":self.output_capped,"stderr_capped":self.stderr_capped,"trace_bytes":self.trace_bytes,"trace_retained_bytes":len(self.trace),"trace_discarded_bytes":self.trace_discarded_bytes,"trace_sha256":self.trace_hash.hexdigest(),"output_full_bytes":self.output_full_bytes,"output_retained_bytes":len(self.out),"stderr_full_bytes":self.stderr_full_bytes,"stderr_retained_bytes":len(self.err),"actions":self.actions,"endpoint_snapshots":self.endpoint_snapshots,"screen":self.screen.text(),"unsupported":self.screen.unsupported,"stderr":self.err.decode("utf8","replace"),"exec_failed":b"S9_EXEC_FAILURE" in self.err,"identity":getattr(self,"identity",{"verified":False}),"final_drain":self.closed,"drain_complete":self.drain_complete,"drain_deadline":self.drain_deadline,"drain_reason":self.drain_reason,"pty_eof":self.pty_eof,"stderr_eof":self.stderr_eof,"cleanup_error":self.cleanup_error,"descendants_left":bool(self.descendants) or self.pid>0,"descendants":self.descendants,"pgid_before":self.pgid_before,"pgid_after":self.pgid_after,"pgid_probe_error":self.pgid_probe_error,"pgid_before_probe_error":self.pgid_before_probe_error,"pgid_after_probe_error":self.pgid_after_probe_error,"reaped":self.status is not None,"pgid":self.original_pgid}
+        return {"spawn":self.spawn_at,"pre_fork_ms":0.0,"readiness":getattr(self,"readiness",None),"exit":exit_code,"signal":sig,"timed_out":self.timed_out,"pty_output_capped":self.output_capped,"stderr_capped":self.stderr_capped,"trace_bytes":self.trace_bytes,"trace_retained_bytes":len(self.trace),"trace_discarded_bytes":self.trace_discarded_bytes,"trace_sha256":self.trace_hash.hexdigest(),"output_full_bytes":self.output_full_bytes,"output_retained_bytes":len(self.out),"stderr_full_bytes":self.stderr_full_bytes,"stderr_retained_bytes":len(self.err),"actions":self.actions,"trace_events":self.trace_events,"endpoint_snapshots":self.endpoint_snapshots,"harness_traffic":self.harness_traffic,"screen":self.screen.text(),"unsupported":self.screen.unsupported,"stderr":self.err.decode("utf8","replace"),"exec_failed":b"S9_EXEC_FAILURE" in self.err,"identity":getattr(self,"identity",{"verified":False}),"final_drain":self.closed,"drain_complete":self.drain_complete,"drain_deadline":self.drain_deadline,"drain_reason":self.drain_reason,"pty_eof":self.pty_eof,"stderr_eof":self.stderr_eof,"cleanup_error":self.cleanup_error,"descendants_left":bool(self.descendants) or self.pid>0,"descendants":self.descendants,"pgid_before":self.pgid_before,"pgid_after":self.pgid_after,"pgid_probe_error":self.pgid_probe_error,"pgid_before_probe_error":self.pgid_before_probe_error,"pgid_after_probe_error":self.pgid_after_probe_error,"reaped":self.status is not None,"pgid":self.original_pgid}
 
 def stage(root):
     release=REPO/"target"/"release"; binaries={"teddy":release/"teddy","teddy-highlight":release/"teddy-highlight"}
@@ -450,6 +588,12 @@ def smoke(a):
 
 def report(a):
     x=json.loads(Path(a.input).read_text())
+    if x.get("schema")==UNIVERSAL_SCHEMA:
+        validate_universal_result(x)
+        text=universal_report_markdown(x); validate_universal_report(x,text)
+        if a.output: Path(a.output).write_text(text)
+        else: print(text,end="")
+        return
     if x.get("phase")=="phase2":
         validate_phase2_result(x)
         text=render_phase2_report(x)
@@ -1045,12 +1189,772 @@ def full(a):
     comparators=discover_comparators(); comparator_records,comparator_evidence=run_comparators(comparators,large,run); evidence=[large_meta]+[r["artifact"] for rs in reps.values() for r in rs]+c2_evidence+c3_evidence+[rss_evidence]+c4_evidence+comparator_evidence
     result={"schema":PHASE2_SCHEMA,"phase":"phase2","methodology":PHASE2_METHODOLOGY,"historical_context":PHASE2_HISTORICAL_CONTEXT,"command":"python3 bench/bench.py full --allow-large","artifact_root":{"path":label,"resolvable_from":"repository root"},"source":{"commit":subprocess.check_output(["git","rev-parse","HEAD"],cwd=REPO,text=True).strip(),"dirty":bool(subprocess.check_output(["git","status","--porcelain"],cwd=REPO))},"cargo_package_version":json.loads(subprocess.check_output(["cargo","metadata","--no-deps","--format-version","1"],cwd=REPO,text=True))["packages"][0]["version"],"profiles":{p:{"files":v["files"],"exact_files":v["exact_files"]} for p,v in profiles.items()},"environment":phase2_environment(),"host":{"os":platform.platform(),"kernel":platform.release(),"arch":platform.machine(),"cpu":os.cpu_count(),"free_bytes":shutil.disk_usage(REPO).free},"geometry":[200,50],"repetitions":5,"quiescence_ms":5,"corpus":{"manifest":manifest,"evidence":large_meta},"claims":{"C1":{"methodology":PHASE2_METHODOLOGY,"status":c1status,"reason":"validated teddy-only warm PTY repetitions; predeclared p95 threshold is 50ms","profiles":reps,"quantiles_ms":c1q},"C2":{"status":c2_status,"reason":"runtime perf PTY attempt; action association is required for PASS","attempts":c2_attempts,"quantiles_us":phase2_quantiles([r["us"] for r in c2_rows])},"C3":{"status":"INCONCLUSIVE","reason":"real literal-search/cancellation PTY attempts retained; UI action association is not established","attempts":c3_attempts,"evidence":c3_evidence},"C4":{"status":"PASS" if all(x["status"]=="PASS" for x in c4) else "FAIL","reason":"isolated teddy integration and declared fixture digest verification","fixtures":c4},"C5":{"status":"NOT_MEASURED","reason":"RSS samples are diagnostic only; no performance budget","samples":rss_samples,"evidence":rss_evidence}},"comparators":{"status":"DISCOVERED","tools":comparators,"records":comparator_records},"evidence":evidence,"limitations":["PTY records application emission/transport, not physical rendering","warm cache/no purge","rendered screens are terminal-model evidence","renderer diagnostic remains a known observed failure"]}; validate_phase2_result(result); (REPO/"bench/results").mkdir(parents=True,exist_ok=True); (REPO/"bench/results/canonical.json").write_text(json.dumps(result,indent=2,sort_keys=True)+"\n"); validate_phase2_result(result); render_phase2_report(result); validate_phase2_report(result,(REPO/"docs/bench_results.md").read_text()); print(json.dumps(result,indent=2,sort_keys=True))
 
+def generate_universal_corpus(path):
+    path=Path(path); path.parent.mkdir(parents=True,exist_ok=True); total=1<<30; size=64; count=total//size; target=(512<<20)//size
+    def row(s): return s.encode()[:63].ljust(63,b"_")+b"\n"
+    records={0:row("UBENCH_HEAD_RECORD"),target:row("UBENCH_TARGET_RECORD UBENCH_NEEDLE"),count-1:row("UBENCH_TAIL_RECORD")}; h=hashlib.sha256(); buf=bytearray()
+    with path.open("wb") as f:
+        for i in range(count):
+            buf.extend(records.get(i,row(f"UBENCH_DATA_{i:016d}")))
+            if len(buf)>=size*4096: f.write(buf); h.update(buf); buf.clear()
+        if buf: f.write(buf); h.update(buf)
+    os.chmod(path,0o444)
+    return {"path":str(path.resolve()),"size":total,"sha256":h.hexdigest(),"record_bytes":size,"records":count,"head_marker":"UBENCH_HEAD_RECORD","needle":"UBENCH_NEEDLE","target_marker":"UBENCH_TARGET_RECORD","tail_marker":"UBENCH_TAIL_RECORD","head_offset":0,"target_offset":target*size,"needle_offset":target*size+len("UBENCH_TARGET_RECORD "),"tail_offset":(count-1)*size,"stream_marker":"64-byte-LF-records-v1","read_only_mode":oct(path.stat().st_mode & 0o777)}
+
+def validate_universal_corpus(path,meta):
+    path=Path(path)
+    if not path.is_file() or meta.get("size")!=(1<<30) or meta.get("record_bytes")!=64 or meta.get("records")!=(1<<24) or path.stat().st_size!=(1<<30): raise ValueError("universal corpus size contract failure")
+    if meta.get("stream_marker")!="64-byte-LF-records-v1" or meta.get("read_only_mode") not in ("0o444","0o440","0o400"): raise ValueError("universal corpus stream/mode contract failure")
+    if path.stat().st_mode & 0o222: raise ValueError("universal corpus is writable")
+    h=hashlib.sha256(); carry=b""; seen={k:[] for k in ("head_marker","needle","target_marker","tail_marker")}; offset=0
+    with path.open("rb") as f:
+        while chunk:=f.read(1<<20):
+            h.update(chunk); data=carry+chunk; base=offset-len(carry)
+            for key in seen:
+                marker=meta[key].encode(); start=0
+                while (pos:=data.find(marker,start))>=0:
+                    seen[key].append(base+pos); start=pos+1
+            carry=data[-128:]; offset+=len(chunk)
+    if h.hexdigest()!=meta.get("sha256") or any(len(v)!=1 for v in seen.values()): raise ValueError("universal corpus hash/marker uniqueness failure")
+    if seen["head_marker"][0]!=meta.get("head_offset") or seen["needle"][0]!=meta.get("needle_offset") or seen["target_marker"][0]!=meta.get("target_offset") or seen["tail_marker"][0]!=meta.get("tail_offset"): raise ValueError("universal corpus marker offset failure")
+    return True
+
+def universal_adapter_argv(name,path,corpus):
+    path=str(Path(path).resolve()); corpus=str(Path(corpus).resolve())
+    try: return UNIVERSAL_ADAPTER_SPEC[name]["argv"](path,corpus)
+    except KeyError: raise ValueError("unknown universal adapter")
+
+def universal_metric(attempts):
+    valid=[a for a in attempts if a.get("status")=="PASS" and a.get("valid") is True and isinstance(a.get("elapsed_ms"),(int,float))]
+    if len(attempts)!=32 or len(valid)!=32: return {"status":"INCONCLUSIVE","repetitions":len(attempts),"p50_ms":None,"p95_ms":None}
+    q=phase2_quantiles([a["elapsed_ms"] for a in valid]); return {"status":"MEASURED","repetitions":32,"p50_ms":q["p50"],"p95_ms":q["p95"]}
+
+def universal_schedule(adapter_names, rotated=True):
+    """Return the only production schedule used by the universal runner.
+
+    The second block is deliberately reversed (including operation order).  A
+    schedule item is an address, not a hint: the executor stores its index in
+    the attempt and the validator binds the two objects again.
+    """
+    names=list(adapter_names); out=[]; index=0
+    for name in names:
+        for op in ("startup","search"):
+            for rep in range(1,4):
+                out.append({"index":index,"adapter":name,"operation":op,"warmup":True,"block":0,"rep":rep}); index+=1
+    for block in (1,2):
+        order=names if block==1 or not rotated else list(reversed(names))
+        ops=("startup","search") if block==1 or not rotated else ("search","startup")
+        for rep in range(1,17):
+            for name in order:
+                for op in ops:
+                    out.append({"index":index,"adapter":name,"operation":op,"warmup":False,"block":block,"rep":rep}); index+=1
+    return out
+
+def _universal_identity(path, argv, version="unknown"):
+    """Capture executable identity at the observation boundary."""
+    p=Path(path); digest,size=sha(p) if p.is_file() else (None,None)
+    return {"path":str(p.resolve()),"sha256":digest,"size":size,"arch":platform.machine(),"version":version,
+            "argv":list(argv),"verified":bool(digest and size is not None)}
+
+def _universal_helpers(adapter):
+    helper=adapter.get("helper_path")
+    return [_universal_identity(helper,[helper],adapter.get("version","unknown"))] if helper else []
+
+def _universal_materialize_attempt(a, s, root, adapter, phase_snapshots):
+    """Persist all evidence for one live Session and return its descriptor-bound record."""
+    root=Path(root); d=root/"attempts"/adapter["name"]; d.mkdir(parents=True,exist_ok=True)
+    process=s.record(); trace=list(s.trace_events)
+    topo_probe=(process.get("pgid_before_probe_error") is None,process.get("pgid_before",[]),process.get("pgid_before_probe_error"))
+    expected=[adapter["argv"]]+([[adapter["helper_path"]]] if adapter.get("helper_path") else [])
+    observed=[]
+    for row in process.get("pgid_before",[]):
+        try: observed.append(shlex.split(row.get("command",row.get("args",""))))
+        except (ValueError,TypeError): pass
+    topology={"expected_argvs":expected,"observed_argvs":observed,"unexpected":sorted(observed)!=sorted(expected),
+              "descendants":process.get("descendants",[]),"pgid_before":process.get("pgid_before",[]),"pgid_after":process.get("pgid_after",[])}
+    a["process"]=process; a["topology_evidence"]=topology; a["topology"]=adapter["expected_topology"]
+    a["identity_after"]=_universal_identity(adapter["path"],adapter["argv"],adapter.get("version","unknown")); a["helper_identity_after"]=_universal_helpers(adapter)
+    def phase_payload(phase, endpoint):
+        """Canonicalize an endpoint using the immutable trace, not the screen."""
+        outputs=[(i,e) for i,e in enumerate(trace) if e.get("channel")=="pty_output"]
+        ordinal=endpoint.get("output_event_index")
+        if not isinstance(ordinal,int): ordinal=endpoint.get("event_index")
+        if endpoint.get("matched") is False or not isinstance(ordinal,int) or ordinal < 0 or ordinal >= len(outputs):
+            return {"phase":phase,"matched":False,"missing":True,"reason":endpoint.get("failure","endpoint_not_observed"),"rows":[],
+                    "output_event_ordinal":None,"trace_event_index":None,"causal_time":None,
+                    "associated_input_trace_event_index":endpoint.get("input_trace_index") if phase != "startup_head" else None,
+                    "input_write_time":endpoint.get("input_trace_time") if phase != "startup_head" else None}
+        full_index,event=outputs[ordinal]
+        return {"phase":phase,"matched":True,"missing":False,"rows":list(endpoint.get("snapshot") or endpoint.get("rows") or []),
+                "output_event_ordinal":ordinal,"trace_event_index":full_index,
+                "causal_time":event.get("at"),
+                "associated_input_trace_event_index":endpoint.get("input_trace_index") if phase != "startup_head" else None,
+                "input_write_time":endpoint.get("input_trace_time") if phase != "startup_head" else None}
+    phase_map={}
+    for phase,payload in phase_snapshots.items():
+        phase_file=d/(f"{a['operation']}-{a['schedule_index']}-phase-{phase}.json")
+        record=phase_payload(phase,payload)
+        phase_file.write_text(json.dumps(record,sort_keys=True)+"\n"); ph,ps=sha(phase_file); phase_map[phase]={"path":str(phase_file),"sha256":ph,"size":ps}
+    phase_index=d/(f"{a['operation']}-{a['schedule_index']}-phase-map.json"); phase_index.write_text(json.dumps(phase_map,sort_keys=True)+"\n"); ih,isize=sha(phase_index); a["phase_snapshots"]={"path":str(phase_index),"sha256":ih,"size":isize}
+    for key,data in (("trace",json.dumps(trace,sort_keys=True).encode()),("stderr",bytes(s.err)),
+                     ("full_screen",("\n".join(s.screen.text())+"\n").encode()),
+                     ("endpoint_screen",json.dumps({"rows":a["endpoint_snapshot"],"event_index":a.get("endpoint_event_index"),"at":a.get("endpoint_at")},sort_keys=True).encode()),
+                     ("process_topology",json.dumps(topology,sort_keys=True).encode())):
+        p=d/(f"{a['operation']}-{a['schedule_index']}-{key}"); p.write_bytes(data); h,z=sha(p); a[key]={"path":str(p),"sha256":h,"size":z}
+    # The raw artifact intentionally excludes only the artifact descriptors.
+    raw=d/(f"{a['operation']}-{a['schedule_index']}-raw.json"); raw.write_text(json.dumps(_universal_attempt_projection(a),sort_keys=True)+"\n"); h,z=sha(raw); a["raw_attempt"]={"path":str(raw),"sha256":h,"size":z}
+    return a
+
+def execute_universal_schedule(adapters, corpus, artifact_root, session_cls=Session, timeout=8, smoke=None):
+    """Execute a complete eligible matrix against real PTY Sessions.
+
+    This is intentionally separate from ``compare``: callers must explicitly
+    provide the already smoke-qualified adapters and may use a small fake PTY
+    corpus in tests.  It never fabricates an attempt for an ineligible name.
+    """
+    root=Path(artifact_root); root.mkdir(parents=True,exist_ok=True); corpus=str(Path(corpus).resolve())
+    if not isinstance(smoke,dict) or set(smoke)!={"corpus","records"} or not isinstance(smoke.get("corpus"),str) or not isinstance(smoke.get("records"),dict):
+        raise ValueError("executor requires complete smoke object")
+    smoke_object=smoke
+    smoke_matrix=smoke_object["records"]
+    if [a.get("name") for a in adapters]!=list(UNIVERSAL_ADAPTER_ORDER): raise ValueError("executor requires complete adapter declaration")
+    if set(smoke_matrix)!=set(UNIVERSAL_ADAPTER_ORDER): raise ValueError("executor requires complete smoke matrix")
+    eligible=[a for a in adapters if a.get("status")=="IDENTITY_QUALIFIED" and smoke_matrix.get(a["name"],{}).get("status")=="PASS"]
+    schedule=universal_schedule([a["name"] for a in eligible]); by_name={a["name"]:a for a in eligible}; operations={a["name"]:{op:{"warmup_attempts":[],"attempts":[]} for op in ("startup","search")} for a in eligible}
+    digest=sha(corpus)[0]; versioned={}
+    for item in schedule:
+        adapter=by_name[item["adapter"]]; home=Path(tempfile.mkdtemp(prefix="s9-universal-attempt-")); s=session_cls(adapter["argv"],geometry=(200,50),timeout=timeout)
+        try:
+            s.spawn(home,home,preflight=False)
+            head=s.until(lambda sc:sc.contains("UBENCH_HEAD_RECORD"),"startup_head")
+            before=_universal_identity(adapter["path"],adapter["argv"],adapter.get("version","unknown")); helper_before=_universal_helpers(adapter)
+            ok,rows,error=process_group(s.original_pgid); s.pgid_before=rows; s.pgid_before_probe_error=error if not ok else None
+            phases={"startup_head":{"phase":"startup_head","rows":head.get("snapshot"),"output_event_index":head.get("output_event_index",head.get("event_index")),"trace_output_index":head.get("trace_index"),"at":head.get("matched_at"),"input_trace_index":None,"input_trace_time":None,"matched":head.get("matched") is True}}
+            writes=[]
+            def causal_action(data,predicate,name):
+                endpoint=s.write_endpoint(data,predicate,name); writes.append(endpoint); return endpoint
+            if item["operation"]=="search":
+                prompt=causal_action(bytes.fromhex(adapter["search_prompt"]),lambda sc,baseline:sc.text()!=baseline and not sc.contains("UBENCH_NEEDLE") and not sc.contains("UBENCH_TARGET_RECORD"),"prompt")
+                phases["prompt"]={"phase":"prompt","rows":prompt.get("snapshot"),"pre_write_screen":prompt.get("pre_write_screen"),"output_event_index":prompt.get("output_event_index",prompt.get("event_index")),"trace_output_index":prompt.get("trace_output_index"),"at":prompt.get("matched_at"),"input_trace_index":prompt.get("input_trace_index"),"input_trace_time":prompt.get("input_trace_time"),"matched":prompt.get("matched") is True}
+                needle=causal_action(b"UBENCH_NEEDLE",lambda sc:sc.contains("UBENCH_NEEDLE") and not sc.contains("UBENCH_TARGET_RECORD"),"typed_needle") if prompt.get("matched") else {"matched":False}
+                phases["typed_needle"]={"phase":"typed_needle","rows":needle.get("snapshot"),"output_event_index":needle.get("output_event_index",needle.get("event_index")),"trace_output_index":needle.get("trace_output_index"),"at":needle.get("matched_at"),"input_trace_index":needle.get("input_trace_index"),"input_trace_time":needle.get("input_trace_time"),"matched":needle.get("matched") is True}
+                submit=causal_action(bytes.fromhex(adapter["search_submit"]),lambda sc:sc.contains("UBENCH_TARGET_RECORD"),"submit") if needle.get("matched") else {"matched":False}
+                phases["target"]={"phase":"target","rows":submit.get("snapshot"),"output_event_index":submit.get("output_event_index",submit.get("event_index")),"trace_output_index":submit.get("trace_output_index"),"at":submit.get("matched_at"),"input_trace_index":submit.get("input_trace_index"),"input_trace_time":submit.get("input_trace_time"),"matched":submit.get("matched") is True}
+                for missing_name in ("prompt","typed_needle","target"):
+                    phases.setdefault(missing_name,{"phase":missing_name,"matched":False,"rows":[],"output_event_index":None,"trace_output_index":None,"at":None,"input_trace_index":None,"input_trace_time":None})
+            quit_action=s.send_action(bytes.fromhex(adapter["quit"]),"quit"); s.actions.append(quit_action); writes.append(quit_action)
+            clean=s.close(); process=s.record(); endpoint=phases.get("target" if item["operation"]=="search" else "startup_head",phases["startup_head"])
+            endpoint_time=endpoint.get("at")
+            if not isinstance(endpoint_time,(int,float)): endpoint_time=endpoint.get("matched_at",endpoint.get("endpoint"))
+            endpoint_ms=endpoint_time*1000 if isinstance(endpoint_time,(int,float)) else None
+            quiet=getattr(s,"quiet_complete",None)
+            if not isinstance(quiet,(int,float)) and isinstance(endpoint_time,(int,float)):
+                quiet=endpoint_time
+            ts={"pre_fork_ms":0.0,"endpoint_ms":endpoint_ms,"quiet_complete_ms":quiet*1000 if isinstance(quiet,(int,float)) and endpoint_ms is not None else None}
+            if item["operation"]=="search":
+                prompt_time=phases.get("prompt",{}).get("at")
+                submit_write=next((w.get("write") for w in writes if w.get("name")=="submit"),None)
+                first_write=writes[0].get("write") if writes else None
+                ts.update({"prompt_start_ms":first_write*1000 if isinstance(first_write,(int,float)) else None,"prompt_echo_ms":prompt_time*1000 if isinstance(prompt_time,(int,float)) else None,"submit_ms":submit_write*1000 if isinstance(submit_write,(int,float)) else None})
+            ts["elapsed_ms"]=ts["endpoint_ms"]-ts.get("submit_ms",0) if item["operation"]=="search" and isinstance(ts["endpoint_ms"],(int,float)) and isinstance(ts.get("submit_ms"),(int,float)) else ts["endpoint_ms"] if item["operation"]=="startup" else None
+            a={"schema":"teddy-s9-universal-attempt-1","operation":item["operation"],"adapter":adapter["name"],"adapter_identity":adapter,"argv":adapter["argv"],"invocation_class":adapter["expected_class"],"topology":adapter["expected_topology"],"schedule_index":item["index"],"execution_state":"completed","block":item["block"],"rep":item["rep"],"warmup":item["warmup"],"corpus_path":corpus,"corpus_before_sha256":digest,"corpus_after_sha256":sha(corpus)[0],"timestamps":ts,"endpoint":"UBENCH_TARGET_RECORD" if item["operation"]=="search" else "UBENCH_HEAD_RECORD","endpoint_snapshot":endpoint.get("snapshot") or endpoint.get("rows") or [],"endpoint_event_index":endpoint.get("output_event_index",endpoint.get("endpoint_event_index")),"endpoint_at":endpoint.get("at",endpoint.get("matched_at",endpoint.get("endpoint"))),"prompt_echo":item["operation"]=="search","prompt_screen":phases.get("prompt",{}).get("rows") or [],"typed_needle":phases.get("typed_needle",{}).get("rows") or [],"writes":writes,"actions":s.actions,"harness_traffic":s.harness_traffic,"process":process,"topology_evidence":{},"identity":{"verified":before.get("verified"),"argv":adapter["argv"],"before":before,"after":_universal_identity(adapter["path"],adapter["argv"],adapter.get("version","unknown"))},"identity_before":before,"helper_identity_before":helper_before,"valid":bool(clean and all(v.get("matched") for v in phases.values())),"status":"PASS" if clean and all(v.get("matched") for v in phases.values()) else "INCONCLUSIVE","phase_snapshots":phases}
+            a["elapsed_ms"]=ts["elapsed_ms"]
+            operations[adapter["name"]][item["operation"]]["warmup_attempts" if item["warmup"] else "attempts"].append(_universal_materialize_attempt(a,s,root,adapter,phases))
+        finally:
+            if not s.closed: s.close()
+            shutil.rmtree(home,ignore_errors=True)
+    for ops in operations.values():
+        for value in ops.values(): value.update(universal_metric(value["attempts"]))
+    size=Path(corpus).stat().st_size
+    corpus_meta={"path":corpus,"size":size,"sha256":digest,"record_bytes":64,"records":size//64,"head_marker":"UBENCH_HEAD_RECORD","needle":"UBENCH_NEEDLE","target_marker":"UBENCH_TARGET_RECORD","tail_marker":"UBENCH_TAIL_RECORD","head_offset":0,"target_offset":512<<20,"needle_offset":512<<20+len("UBENCH_TARGET_RECORD "),"tail_offset":max(0,size-64),"stream_marker":"64-byte-LF-records-v1","read_only_mode":oct(Path(corpus).stat().st_mode & 0o777)}
+    return {"schema":UNIVERSAL_SCHEMA,"phase":"universal-comparison","command":"python3 bench/bench.py compare --allow-large --execute","execution_state":"completed","contract_only":False,"artifact_root":{"path":str(root)},"geometry":[200,50],"warmups":3,"blocks":2,"repetitions_per_block":16,"corpus":corpus_meta,"adapters":adapters,"adapter_smoke":smoke_object,"operations":operations,"schedule":schedule,"limitations":["Completed executor evidence is non-claim comparison evidence; no rankings are produced."],"c1_c5_isolation":"Universal comparison is non-claim evidence and cannot modify Teddy C1-C5."}
+
+def _universal_adapter_ok(a,corpus):
+    if set(a)!=set(UNIVERSAL_ADAPTER_FIELDS): return False
+    name=a["name"]
+    if name not in UNIVERSAL_ADAPTER_SPEC or not isinstance(a["path"],str) or not Path(a["path"]).is_absolute(): return False
+    spec=UNIVERSAL_ADAPTER_SPEC[name]; expected=universal_adapter_argv(name,a["path"],corpus)
+    if a["argv"]!=expected or a["search_prompt"]!=spec["search_prompt"].hex() or a["search_submit"]!=spec["search_submit"].hex() or a["quit"]!=spec["quit"].hex(): return False
+    if a["expected_topology"]!=spec["expected_topology"] or a["expected_class"]!=spec["expected_class"]: return False
+    if name=="teddy-shipped":
+        if not isinstance(a["helper_path"],str) or not Path(a["helper_path"]).is_absolute() or Path(a["helper_path"]).name!="teddy-highlight" or Path(a["helper_path"]).parent!=Path(a["path"]).parent: return False
+    elif a["helper_path"] is not None: return False
+    if a["status"]=="IDENTITY_QUALIFIED":
+        if not isinstance(a["sha256"],str) or not re.fullmatch(r"[0-9a-f]{64}",a["sha256"]): return False
+        if not isinstance(a["size"],int) or a["size"]<=0 or not isinstance(a["arch"],str) or not a["arch"] or not isinstance(a["version"],str) or not a["version"]: return False
+        # Re-hash the participant against disk, exactly as helper binaries are
+        # verified: a self-attested digest would let evidence be attributed to
+        # a substituted or nonexistent executable.
+        if not Path(a["path"]).is_file(): return False
+        if (a["sha256"],a["size"])!=sha(Path(a["path"])): return False
+    if name=="vi": return a["status"]=="ALIAS_OF" and a["alias_of"]=="vim"
+    if name=="vis": return a["status"]=="REJECTED_UNSUPPORTED" and a["path"]=="/usr/bin/vis" and a["alias_of"] is None
+    return a["status"]=="IDENTITY_QUALIFIED" and a["alias_of"] is None
+
+def _smoke_lifecycle_ok(process):
+    # Smoke PASS gates measurement eligibility, so it requires the same
+    # presence discipline as attempt lifecycle: a stripped record must not
+    # read as a clean exit.
+    if not isinstance(process,dict): return False
+    must_be_clean=("drain_deadline","cleanup_error","pgid_after","descendants_left","timed_out","stderr_capped","unsupported")
+    capped="output_capped" if "output_capped" in process else "pty_output_capped"
+    return (process.get("exit")==0 and ("signal" in process and process["signal"] is None) and
+            process.get("reaped") is True and process.get("pty_eof") is True and process.get("stderr_eof") is True and
+            process.get("drain_complete") is True and all(k in process and not process[k] for k in must_be_clean) and
+            capped in process and not process[capped] and process.get("exec_failed") is False)
+
+def _validate_smoke_attempt(record,trace,actions,identity,topology,phase_map,adapter,artifact_root):
+    """Validate attempted smoke from retained artifacts, including failures."""
+    if not validate_trace_provenance(trace,record.get("harness_traffic",[])): raise ValueError("smoke trace provenance mismatch")
+    process=record.get("process",{}); life=_smoke_lifecycle_ok(process)
+    if not life: raise ValueError("smoke lifecycle mismatch")
+    names=("startup_head","prompt","typed_needle","target"); expected_input=("prompt","typed_needle","submit","quit")
+    if set(phase_map)!=set(names): raise ValueError("smoke phase matrix mismatch")
+    outputs=[(i,e) for i,e in enumerate(trace) if e.get("channel")=="pty_output"]; input_events=[(i,e) for i,e in enumerate(trace) if e.get("channel")=="pty_input" and e.get("action") is True]
+    for action in actions:
+        ti=action.get("trace_index")
+        if not isinstance(ti,int) or ti<0 or ti>=len(trace): raise ValueError("smoke action binding mismatch")
+        event=trace[ti]
+        if event.get("channel")!="pty_input" or event.get("action") is not True or event.get("name")!=action.get("name") or event.get("data")!=action.get("bytes") or event.get("at")!=action.get("write"): raise ValueError("smoke action binding mismatch")
+    payloads={}
+    for name in names:
+        payloads[name]=json.loads(_universal_descriptor(phase_map[name],artifact_root).read_text())
+        q=payloads[name]
+        if q.get("phase",q.get("name"))!=name or not isinstance(q.get("rows"),list): raise ValueError("smoke phase payload mismatch")
+        q["phase"]=name
+        if not isinstance(q.get("matched"),bool) or not isinstance(q.get("missing"),bool): raise ValueError("smoke phase flags missing")
+        if q.get("matched") is False:
+            if q.get("missing") is not True or q["rows"] or any(q.get(k) is not None for k in ("output_event_ordinal","trace_event_index","causal_time")): raise ValueError("smoke missing phase mismatch")
+        else:
+            oi=q.get("output_event_ordinal"); fi=q.get("trace_event_index")
+            if not isinstance(oi,int) or oi<0 or oi>=len(outputs) or outputs[oi][0]!=fi or trace[fi].get("at")!=q.get("causal_time"): raise ValueError("smoke phase replay mismatch")
+            replay=Screen(200,50)
+            for _,event in outputs[:oi+1]: replay.feed(bytes.fromhex(event["data"]))
+            if replay.text()!=q["rows"]: raise ValueError("smoke phase replay mismatch")
+            if name != "startup_head":
+                input_name={"prompt":"prompt","typed_needle":"typed_needle","target":"submit"}[name]
+                phase_input=next((x for x in actions if x.get("name")==input_name),None)
+                if phase_input is not None and phase_input.get("write") is None and isinstance(phase_input.get("trace_index"),int) and phase_input["trace_index"] < len(trace): phase_input["write"]=trace[phase_input["trace_index"]].get("at")
+                if phase_input is None or q.get("associated_input_trace_event_index",phase_input.get("trace_index"))!=phase_input.get("trace_index") or q.get("input_write_time",phase_input.get("write"))!=phase_input.get("write"): raise ValueError("smoke phase association mismatch")
+                if not phase_input.get("write") < q.get("causal_time"): raise ValueError("smoke phase causal order mismatch")
+        if len(payloads)==len(names) and all(payloads[n].get("matched") is True for n in names):
+            points=[payloads["startup_head"].get("trace_event_index"),payloads["prompt"].get("trace_event_index"),payloads["typed_needle"].get("trace_event_index"),payloads["target"].get("trace_event_index")]
+            submit=next((x for x in actions if x.get("name")=="submit"),None)
+            if any(not isinstance(x,int) for x in points) or points!=sorted(points) or submit is None or not points[-1]>submit.get("trace_index",-1): raise ValueError("smoke phase order mismatch")
+    missing=next((i for i,n in enumerate(names) if payloads[n].get("matched") is False),None)
+    if missing is None:
+        if record.get("status")!="PASS" or [x.get("name") for x in actions]!=list(expected_input): raise ValueError("smoke status/action mismatch")
+    else:
+        if record.get("status")!="INCONCLUSIVE" or [x.get("name") for x in actions]!=list(expected_input[:missing]+("quit",)): raise ValueError("smoke inconclusive prefix mismatch")
+        first_name=names[missing]; input_name={"prompt":"prompt","typed_needle":"typed_needle","target":"submit"}.get(first_name)
+        phase_input=next((x for x in actions if x.get("name")==input_name),None)
+        first_payload=payloads[first_name]
+        if phase_input is None or first_payload.get("associated_input_trace_event_index")!=phase_input.get("trace_index") or first_payload.get("input_write_time")!=phase_input.get("write"): raise ValueError("smoke missing phase association mismatch")
+        for i in range(missing,len(names)):
+            q=payloads[names[i]]
+            if q.get("matched") is not False: raise ValueError("smoke unattempted phase mismatch")
+            if i>missing and any(q.get(k) is not None for k in ("associated_input_trace_event_index","input_write_time")): raise ValueError("smoke unattempted phase association mismatch")
+    if identity.get("verified") is not True or identity.get("argv")!=adapter["argv"]: raise ValueError("smoke identity mismatch")
+    for key in ("before","after"):
+        value=identity.get(key)
+        if (not isinstance(value,dict) or value.get("path")!=str(Path(adapter["path"]).resolve()) or value.get("sha256")!=adapter.get("sha256") or value.get("size")!=adapter.get("size") or value.get("verified") is not True): raise ValueError("smoke executable identity mismatch")
+    for key in ("helper_identity_before","helper_identity_after"):
+        helpers=record.get(key,[]); expected_helper=adapter.get("helper_path")
+        if expected_helper and key not in record: raise ValueError("smoke helper identity missing")
+        if bool(expected_helper)!=(len(helpers)==1): raise ValueError("smoke helper identity mismatch")
+        if expected_helper and (helpers[0].get("path")!=str(Path(expected_helper).resolve()) or helpers[0].get("sha256")!=sha(Path(expected_helper))[0] or helpers[0].get("size")!=sha(Path(expected_helper))[1] or helpers[0].get("verified") is not True): raise ValueError("smoke helper identity mismatch")
+    expected=[adapter["argv"]]+([[adapter["helper_path"]]] if adapter.get("helper_path") else [])
+    if topology.get("expected_argvs")!=expected or topology.get("unexpected") is not False: raise ValueError("smoke topology mismatch")
+    rows=topology.get("pgid_before")
+    if not isinstance(rows,list) or not rows: raise ValueError("smoke topology mismatch")
+    try: observed=[shlex.split(row.get("command",row.get("args",""))) for row in rows]
+    except (TypeError,ValueError): raise ValueError("smoke topology mismatch")
+    if observed!=topology.get("observed_argvs") or observed!=expected: raise ValueError("smoke topology mismatch")
+    return True
+
+def _validate_universal_smoke(smoke, adapters, artifact_root):
+    if not isinstance(smoke,dict) or not isinstance(smoke.get("corpus"),str) or not isinstance(smoke.get("records"),dict):
+        raise ValueError("missing universal adapter smoke artifact")
+    if set(smoke["records"])!=set(adapters): raise ValueError("universal smoke adapter matrix mismatch")
+    for name,record in smoke["records"].items():
+        if not isinstance(record,dict) or record.get("status") not in {"PASS","INCONCLUSIVE","UNAVAILABLE","REJECTED_UNSUPPORTED","ALIAS_OF"} or not isinstance(record.get("reason"),str) or not isinstance(record.get("attempts"),int) or record["attempts"]<0:
+            raise ValueError("invalid universal smoke record")
+        if record["attempts"]:
+            # An attempted smoke is evidence, even when it is inconclusive;
+            # status text cannot stand in for the retained artifacts.
+            records=record.get("records")
+            if not isinstance(records,dict) or not {"trace","actions","identity","topology","phase_snapshots"}.issubset(records): raise ValueError("attempted smoke lacks evidence")
+            try:
+                trace=json.loads(_universal_descriptor(records["trace"],artifact_root).read_text())
+                actions=json.loads(_universal_descriptor(records["actions"],artifact_root).read_text())
+                identity=json.loads(_universal_descriptor(records["identity"],artifact_root).read_text())
+                topology=json.loads(_universal_descriptor(records["topology"],artifact_root).read_text())
+                phase_map=json.loads(_universal_descriptor(records["phase_snapshots"],artifact_root).read_text())
+            except (OSError,ValueError,UnicodeDecodeError): raise ValueError("invalid attempted smoke evidence")
+            if not isinstance(trace,list) or not isinstance(actions,list) or actions!=record.get("actions"): raise ValueError("smoke actions artifact mismatch")
+            if identity!=record.get("identity") or topology!=record.get("topology"): raise ValueError("smoke identity/topology artifact mismatch")
+            if record["status"]=="INCONCLUSIVE" and not isinstance(phase_map,dict): raise ValueError("smoke phase evidence missing")
+            smoke_adapter=dict(adapters[name]); smoke_adapter["argv"]=record.get("argv",smoke_adapter["argv"])
+            _validate_smoke_attempt(record,trace,actions,identity,topology,phase_map,smoke_adapter,artifact_root)
+        if record["status"]=="PASS":
+            if adapters[name]["status"]!="IDENTITY_QUALIFIED" or record["attempts"]!=1: raise ValueError("invalid universal smoke pass")
+            if not isinstance(record.get("process"),dict) or not isinstance(record.get("identity"),dict) or record["identity"].get("verified") is not True: raise ValueError("smoke identity evidence missing")
+            records=record.get("records")
+            if not isinstance(records,dict) or set(records)!={"trace","screen","actions","identity","topology","phase_snapshots"}: raise ValueError("smoke evidence matrix mismatch")
+            paths={key:_universal_descriptor(value,artifact_root) for key,value in records.items()}
+            try:
+                trace=json.loads(paths["trace"].read_text()); screen=paths["screen"].read_text().splitlines()
+                actions=json.loads(paths["actions"].read_text()); identity=json.loads(paths["identity"].read_text()); topology=json.loads(paths["topology"].read_text())
+                phases=json.loads(paths["phase_snapshots"].read_text())
+            except (OSError,ValueError,UnicodeDecodeError): raise ValueError("invalid universal smoke evidence payload")
+            if not isinstance(trace,list) or not trace or any(not isinstance(e,dict) or e.get("channel") not in {"pty_input","pty_output","pty_output_raw","stderr"} or not isinstance(e.get("at"),(int,float)) or not isinstance(e.get("data"),str) for e in trace): raise ValueError("invalid universal smoke trace")
+            if not validate_trace_provenance(trace,record.get("harness_traffic",[])): raise ValueError("universal smoke trace provenance mismatch")
+            expected=[("prompt",bytes.fromhex(adapters[name]["search_prompt"])),("typed_needle",b"UBENCH_NEEDLE"),("submit",bytes.fromhex(adapters[name]["search_submit"])),("quit",bytes.fromhex(adapters[name]["quit"]))]
+            if [x.get("name") for x in record.get("actions",[])]!=[x[0] for x in expected] or any(x.get("bytes")!=data.hex() for x,data in zip(record["actions"],(data for _,data in expected))): raise ValueError("universal smoke action sequence mismatch")
+            smoke_argv=record.get("argv")
+            if identity!=record["identity"] or identity.get("verified") is not True or not isinstance(smoke_argv,list) or identity.get("argv")!=smoke_argv or smoke_argv[:-1]!=adapters[name]["argv"][:-1]: raise ValueError("universal smoke identity mismatch")
+            expected_argvs=[smoke_argv]+([[adapters[name]["helper_path"]]] if adapters[name]["helper_path"] else [])
+            if topology!=record.get("topology") or topology.get("expected_argvs")!=expected_argvs or topology.get("observed_argvs")!=expected_argvs or topology.get("unexpected") is not False or topology.get("descendants") or topology.get("pgid_after"): raise ValueError("universal smoke topology mismatch")
+            process=record.get("process",{}); lifecycle=_smoke_lifecycle_ok(process)
+            if not lifecycle: raise ValueError("universal smoke lifecycle failure")
+            inputs=[e.get("data") for e in trace if e.get("channel")=="pty_input" and e.get("action") is True]
+            if inputs!=[data.hex() for _,data in expected]: raise ValueError("universal smoke trace action mismatch")
+            replay=Screen(200,50)
+            for event in trace:
+                if event["channel"]=="pty_output": replay.feed(bytes.fromhex(event["data"]))
+            replay_rows=replay.text()
+            if [row.rstrip() for row in replay_rows]!=[row.rstrip() for row in screen]: raise ValueError("universal smoke final screen mismatch")
+            if not isinstance(phases,dict) or set(phases)!={"startup_head","prompt","typed_needle","target"}: raise ValueError("universal smoke phase matrix mismatch")
+            output_events=[i for i,e in enumerate(trace) if e.get("channel")=="pty_output"]
+            input_events=[(i,e) for i,e in enumerate(trace) if e.get("channel")=="pty_input" and e.get("action") is True]
+            action_indices=[i for i,e in input_events]
+            if len(action_indices)!=4: raise ValueError("universal smoke action trace cardinality mismatch")
+            phase_rows={}
+            for phase,descriptor in phases.items():
+                p=_universal_descriptor(descriptor,artifact_root)
+                try: payload=json.loads(p.read_text())
+                except (OSError,ValueError,UnicodeDecodeError): raise ValueError("invalid universal smoke phase payload")
+                if not isinstance(payload,dict) or payload.get("name")!=phase or not isinstance(payload.get("rows"),list): raise ValueError("invalid universal smoke phase payload")
+                oi=payload.get("output_event_ordinal",payload.get("output_event_index"))
+                if not isinstance(oi,int): raise ValueError("invalid universal smoke phase payload")
+                payload["output_event_index"]=oi
+                if not isinstance(oi,int) or oi<0 or oi>=len(output_events): raise ValueError("universal smoke phase endpoint mismatch")
+                replay_phase=Screen(200,50)
+                seen=0
+                for e in trace:
+                    if e.get("channel")=="pty_output":
+                        replay_phase.feed(bytes.fromhex(e["data"]));
+                        if seen==oi: break
+                        seen+=1
+                if replay_phase.text()!=payload["rows"]: raise ValueError("universal smoke phase snapshot is detached")
+                phase_rows[phase]=payload
+            if "UBENCH_HEAD_RECORD" not in "\n".join(phase_rows["startup_head"]["rows"]): raise ValueError("universal smoke head phase mismatch")
+            if "UBENCH_TARGET_RECORD" in "\n".join(phase_rows["prompt"]["rows"]): raise ValueError("universal smoke prompt target forgery")
+            needle_text="\n".join(phase_rows["typed_needle"]["rows"])
+            if "UBENCH_NEEDLE" not in needle_text or "UBENCH_TARGET_RECORD" in needle_text: raise ValueError("universal smoke needle phase mismatch")
+            target_text="\n".join(phase_rows["target"]["rows"])
+            if "UBENCH_TARGET_RECORD" not in target_text or phase_rows["target"]["output_event_index"]<=phase_rows["typed_needle"]["output_event_index"]: raise ValueError("universal smoke target phase mismatch")
+            if phase_rows["startup_head"]["output_event_index"]>phase_rows["prompt"]["output_event_index"] or phase_rows["prompt"]["output_event_index"]>phase_rows["typed_needle"]["output_event_index"]: raise ValueError("universal smoke phase order mismatch")
+            submit_index=action_indices[2]
+            target_trace_index=output_events[phase_rows["target"].get("output_event_ordinal",phase_rows["target"].get("output_event_index"))]
+            if target_trace_index<=submit_index: raise ValueError("universal smoke target-before-submit")
+            if not _universal_terminal_pairs(trace,record.get("harness_traffic",[])): raise ValueError("universal smoke terminal evidence mismatch")
+        elif adapters[name]["status"]!="IDENTITY_QUALIFIED" and record["attempts"]!=0:
+            raise ValueError("inactive adapter smoke has attempts")
+        elif record["attempts"] and (not isinstance(record.get("records"),dict) or not isinstance(record.get("process"),dict)):
+            raise ValueError("inconclusive smoke lacks bounded evidence")
+    return True
+
+UNIVERSAL_ATTEMPT_ARTIFACTS=("raw_attempt","trace","stderr","full_screen","endpoint_screen","process_topology")
+
+def _universal_descriptor(path,root):
+    if not isinstance(path,dict) or set(path)!={"path","sha256","size"} or not isinstance(path["path"],str) or not path["path"] or not re.fullmatch(r"[0-9a-f]{64}",path["sha256"]) or not isinstance(path["size"],int) or path["size"]<0: raise ValueError("invalid universal artifact descriptor")
+    p=_check_artifact(path,root)
+    if p.stat().st_size!=path["size"] or sha(p)[0]!=path["sha256"]: raise ValueError("universal artifact hash/size mismatch")
+    return p
+
+def _universal_attempt_projection(a):
+    return {k:v for k,v in a.items() if k not in UNIVERSAL_ATTEMPT_ARTIFACTS}
+
+def _universal_terminal_pairs(trace_events, traffic):
+    raw=b"".join(bytes.fromhex(e["data"]) for e in trace_events if e.get("channel")=="pty_output_raw")
+    expected=[]; cursor=0
+    queries=((b"\033[6n",b"\033[1;1R","DSR_REPLY"),(b"\033[c",b"\033[?1;2c","DA_REPLY"))
+    while cursor < len(raw):
+        matches=[(raw.find(query,cursor),kind,query,reply) for query,reply,kind in queries if raw.find(query,cursor)>=0]
+        if not matches: break
+        pos,kind,query,reply=min(matches,key=lambda x:x[0]); expected.append((kind,query.hex(),reply.hex())); cursor=pos+len(query)
+    observed=[(x.get("kind"),x.get("query"),x.get("reply")) for x in traffic]
+    replies=[e for e in trace_events if e.get("channel")=="pty_input" and e.get("harness") is True]
+    query_times=[]; joined=b""; cursor=0
+    for e in trace_events:
+        if e.get("channel")=="pty_output_raw":
+            joined+=bytes.fromhex(e["data"])
+            while cursor < len(joined):
+                found=[(joined.find(query,cursor),query) for query,_,_ in queries if joined.find(query,cursor)>=0]
+                if not found: break
+                pos,query=min(found,key=lambda x:x[0]); query_times.append((pos,e["at"])); cursor=pos+len(query)
+    query_times=[at for _,at in sorted(query_times)]
+    return (observed==expected and len(replies)==len(traffic)
+            and all(bytes.fromhex(e["data"])==bytes.fromhex(x["reply"]) for e,x in zip(replies,traffic))
+            and all(x.get("deterministic") is True and isinstance(x.get("at"),(int,float)) for x in traffic)
+            and all(x["at"]>=q for x,q in zip(traffic,query_times)))
+
+def validate_universal_attempt(a,operation,digest,adapter,artifact_root,corpus_path):
+    required={"schema","operation","adapter","adapter_identity","argv","invocation_class","topology","schedule_index","execution_state","block","rep","warmup","corpus_path","corpus_before_sha256","corpus_after_sha256","timestamps","endpoint","endpoint_snapshot","prompt_echo","prompt_screen","typed_needle","writes","actions","harness_traffic","process","topology_evidence","identity","valid","status",*UNIVERSAL_ATTEMPT_ARTIFACTS}
+    if not required.issubset(a) or a.get("schema")!="teddy-s9-universal-attempt-1" or a.get("operation")!=operation or a.get("adapter")!=adapter["name"]: return False
+    # Every materialized (non-contract) observation carries the complete
+    # executor boundary evidence.  In particular, do not accept the old
+    # phase-less/identity-inferred representation.
+    if a.get("execution_state")=="completed":
+        if any(k not in a for k in ("phase_snapshots","identity_before","identity_after","helper_identity_before","helper_identity_after")): return False
+    if a.get("warmup") is True:
+        if a.get("block")!=0 or a.get("rep") not in range(1,4): return False
+    elif a.get("warmup") is False:
+        if a.get("block") not in (1,2) or a.get("rep") not in range(1,17): return False
+    else: return False
+    paths={k:_universal_descriptor(a[k],artifact_root) for k in UNIVERSAL_ATTEMPT_ARTIFACTS}
+    paths["phase_snapshots"]=_universal_descriptor(a["phase_snapshots"],artifact_root)
+    raw=json.loads(paths["raw_attempt"].read_text())
+    if raw!=_universal_attempt_projection(a): return False
+    try: trace_events=json.loads(paths["trace"].read_text())
+    except (OSError,ValueError): return False
+    if not isinstance(trace_events,list) or not trace_events or any(not isinstance(e,dict) or e.get("channel") not in {"pty_input","pty_output","pty_output_raw","stderr"} or not isinstance(e.get("at"),(int,float)) or not isinstance(e.get("data"),str) for e in trace_events): return False
+    if not validate_trace_provenance(trace_events,a.get("harness_traffic",[])): return False
+    endpoint=json.loads(paths["endpoint_screen"].read_text())
+    if endpoint.get("rows")!=a["endpoint_snapshot"]: return False
+    outputs=[e for e in trace_events if e.get("channel")=="pty_output"]
+    if "endpoint_event_index" in a:
+        oi=a.get("endpoint_event_index")
+        if not isinstance(oi,int) or oi<0 or oi>=len(outputs) or endpoint.get("event_index")!=oi:
+            if a.get("status")!="INCONCLUSIVE": return False
+        else:
+            replay_endpoint=Screen(200,50)
+            for e in outputs[:oi+1]: replay_endpoint.feed(bytes.fromhex(e["data"]))
+            if replay_endpoint.text()!=a["endpoint_snapshot"] or endpoint.get("at")!=outputs[oi].get("at"): return False
+    topology=json.loads(paths["process_topology"].read_text())
+    if topology!=a["topology_evidence"]: return False
+    if a["adapter_identity"]!=adapter or a["argv"]!=adapter["argv"] or a["identity"].get("verified") is not True or a["identity"].get("argv")!=adapter["argv"] or a["invocation_class"]!=adapter["expected_class"] or a["topology"]!=adapter["expected_topology"] or a["execution_state"]!="completed": return False
+    executor_evidence=True
+    if executor_evidence:
+        for key in ("identity_before","identity_after"):
+            value=a.get(key) or (a.get("identity",{}).get("before") if key=="identity_before" else a.get("identity",{}).get("after"))
+            if not isinstance(value,dict) or value.get("path")!=str(Path(adapter["path"]).resolve()) or value.get("sha256")!=adapter.get("sha256") or value.get("size")!=adapter.get("size") or value.get("arch")!=adapter.get("arch") or value.get("version")!=adapter.get("version") or value.get("verified") is not True: return False
+        for key in ("helper_identity_before","helper_identity_after"):
+            helpers=a.get(key,[]); expected_helper=adapter.get("helper_path")
+            if bool(expected_helper)!=(len(helpers)==1): return False
+            if expected_helper:
+                h=helpers[0]
+                if h.get("path")!=str(Path(expected_helper).resolve()) or h.get("sha256")!=sha(Path(expected_helper))[0] or h.get("size")!=sha(Path(expected_helper))[1] or h.get("verified") is not True: return False
+    expected_argvs=[adapter["argv"]]+([[adapter["helper_path"]]] if adapter["helper_path"] else [])
+    topology_ok=(a["topology_evidence"].get("unexpected") is False and not a["topology_evidence"].get("descendants") and not a["topology_evidence"].get("pgid_after") and a["topology_evidence"].get("expected_argvs")==expected_argvs and a["topology_evidence"].get("observed_argvs")==expected_argvs)
+    if executor_evidence:
+        rows=a["topology_evidence"].get("pgid_before")
+        if not isinstance(rows,list) or not rows: return False
+        derived=[]
+        try: derived=[shlex.split(row.get("command",row.get("args",""))) for row in rows]
+        except (TypeError,ValueError): return False
+        if derived!=a["topology_evidence"].get("observed_argvs"): return False
+    # Absence is not evidence of cleanliness: each of these must be *present*
+    # and falsy, or a stripped process record would read as a clean lifecycle.
+    p=a["process"]; must_be_clean=("drain_deadline","cleanup_error","pgid_after","descendants_left","timed_out","output_capped","stderr_capped","unsupported")
+    life=p.get("exit")==0 and ("signal" in p and p["signal"] is None) and p.get("reaped") is True and p.get("pty_eof") is True and p.get("stderr_eof") is True and p.get("drain_complete") is True and all(k in p and not p[k] for k in must_be_clean) and p.get("exec_failed") is False
+    t=a["timestamps"]
+    fields=("pre_fork_ms","endpoint_ms","quiet_complete_ms","elapsed_ms") if operation=="startup" else ("pre_fork_ms","prompt_start_ms","prompt_echo_ms","submit_ms","endpoint_ms","quiet_complete_ms","elapsed_ms")
+    # Missing endpoints are represented by null timing values.  They are
+    # evidence of an incomplete observation, not zero-duration timings.
+    if any(not isinstance(t.get(k),(int,float)) and not (a.get("status")=="INCONCLUSIVE" and t.get(k) is None) for k in fields): return False
+    timing_available=all(isinstance(t.get(k),(int,float)) for k in fields)
+    # The headline elapsed_ms is what universal_metric() turns into p50/p95, so
+    # it must be the same object the timestamp chain above just validated.
+    if a.get("elapsed_ms")!=t.get("elapsed_ms"): return False
+    # Binding the headline to the chain is not enough on its own: shifting the
+    # whole chain would still agree with itself.  endpoint_at and the action
+    # write times are re-derived from the trace below, so anchoring the two
+    # timings elapsed_ms is computed from makes a shifted chain detectable.
+    if timing_available:
+        # Startup elapsed is endpoint minus pre_fork, so an unattested
+        # pre_fork_ms is a second way to inflate the duration.  The executor
+        # captures it as the trace clock origin, before fork/exec.
+        if t["pre_fork_ms"]!=0.0: return False
+        if not isinstance(a.get("endpoint_at"),(int,float)) or t["endpoint_ms"]!=a["endpoint_at"]*1000: return False
+        if operation=="search":
+            submit=next((w for w in a["writes"] if w.get("name")=="submit"),None)
+            submit_at=None if submit is None else submit.get("write",submit.get("at"))
+            if not isinstance(submit_at,(int,float)) or t["submit_ms"]!=submit_at*1000: return False
+    ordering=(t["pre_fork_ms"]<=t["endpoint_ms"]<=t["quiet_complete_ms"]) if operation=="startup" and timing_available else (t["pre_fork_ms"]<=t["prompt_start_ms"]<=t["prompt_echo_ms"]<=t["submit_ms"]<t["endpoint_ms"]<=t["quiet_complete_ms"]) if operation=="search" and timing_available else False
+    names=[w.get("name") for w in a["writes"]]; expected_names=["quit"] if operation=="startup" else ["prompt","typed_needle","submit","quit"]
+    expected_bytes={"prompt":adapter["search_prompt"],"typed_needle":b"UBENCH_NEEDLE".hex(),"submit":adapter["search_submit"],"quit":adapter["quit"]}
+    # The action prefix is derived from the phase map, never from the
+    # supplied writes/actions (which otherwise made the invalid-prefix check
+    # ineffective).
+    writes_ok=all(w.get("name") in expected_bytes and w.get("bytes")==expected_bytes[w.get("name")] and isinstance(w.get("at",w.get("write")),(int,float)) for w in a["writes"]) and all(a["writes"][i].get("at",a["writes"][i].get("write"))<=a["writes"][i+1].get("at",a["writes"][i+1].get("write")) for i in range(len(a["writes"])-1))
+    writes_ok=writes_ok and [e.get("data") for e in trace_events if e.get("channel")=="pty_input" and e.get("action") is True]==[w["bytes"] for w in a["writes"]]
+    action_names=[x.get("name") for x in a["actions"]]
+    writes_ok=writes_ok and all(x.get("bytes")==expected_bytes.get(x.get("name")) for x in a["actions"])
+    if executor_evidence:
+        action_events=[(i,e) for i,e in enumerate(trace_events) if e.get("channel")=="pty_input" and e.get("action") is True]
+        if len(action_events)!=len(a["writes"]) or any(w.get("trace_index")!=i or w.get("write")!=e.get("at") for w,(i,e) in zip(a["writes"],action_events)): return False
+        if any(x.get("trace_index")!=i or x.get("at",x.get("write"))!=e.get("at") for x,(i,e) in zip(a["actions"],action_events)): return False
+    elapsed=t["endpoint_ms"]-t["pre_fork_ms"] if operation=="startup" and timing_available else t["endpoint_ms"]-t["submit_ms"] if operation=="search" and timing_available else None
+    screen=paths["full_screen"].read_text().splitlines(); event="UBENCH_HEAD_RECORD" if operation=="startup" else "UBENCH_TARGET_RECORD"
+    replay=Screen(200,50)
+    for e in trace_events:
+        if e["channel"]=="pty_output":
+            try: replay.feed(bytes.fromhex(e["data"]))
+            except ValueError: return False
+    if replay.text()!=screen: return False
+    causal=ordering and timing_available and t["elapsed_ms"]==elapsed and a["endpoint"]==event and a["endpoint_snapshot"] and event in "\n".join(a["endpoint_snapshot"])
+    if operation=="startup": causal=causal and event in "\n".join(screen) and "UBENCH_TARGET_RECORD" not in "\n".join(screen)
+    else: causal=causal and a["prompt_echo"] is True and event not in "\n".join(a["prompt_screen"]) and event not in "\n".join(a["typed_needle"]) and "UBENCH_TARGET_RECORD" in "\n".join(screen)
+    snapshots=a.get("phase_snapshots")
+    executor_evidence="phase_snapshots" in a
+    if executor_evidence and not (isinstance(snapshots,dict) and set(snapshots)=={"path","sha256","size"}): return False
+    if isinstance(snapshots,dict) and set(snapshots)=={"path","sha256","size"}:
+        try: phase_map=json.loads(_universal_descriptor(snapshots,artifact_root).read_text())
+        except (OSError,ValueError,UnicodeDecodeError): return False
+        if not isinstance(phase_map,dict): return False
+        snapshots={}
+        for name,descriptor in phase_map.items():
+            try: snapshots[name]=json.loads(_universal_descriptor(descriptor,artifact_root).read_text())
+            except (OSError,ValueError,UnicodeDecodeError): return False
+    if snapshots is not None:
+        needed=("startup_head",) if operation=="startup" else ("startup_head","prompt","typed_needle","target")
+        required_phases=needed
+        if executor_evidence and set(snapshots)!=set(required_phases): return False
+        if not isinstance(snapshots,dict) or any(k not in snapshots for k in required_phases): return False
+        outputs=[e for e in trace_events if e.get("channel")=="pty_output"]
+        full_outputs=[(i,e) for i,e in enumerate(trace_events) if e.get("channel")=="pty_output"]
+        action_events=[(i,e) for i,e in enumerate(trace_events) if e.get("channel")=="pty_input" and e.get("action") is True]
+        action_by_name={e.get("name"): (i,e) for i,e in action_events}
+        if operation=="search" and a.get("status")=="INCONCLUSIVE":
+            submit=action_by_name.get("submit")
+            if submit and any(i<submit[0] and b"UBENCH_TARGET_RECORD" in bytes.fromhex(e.get("data","")) for i,e in enumerate(trace_events) if e.get("channel")=="pty_output"): return False
+        for key in required_phases:
+            snap=snapshots[key]
+            oi=snap.get("output_event_ordinal") if isinstance(snap,dict) else None
+            fi=snap.get("trace_event_index") if isinstance(snap,dict) else None
+            if not isinstance(snap,dict) or snap.get("phase")!=key or not isinstance(snap.get("rows"),list): return False
+            if snap.get("matched") is False or snap.get("missing") is True:
+                if a.get("status")!="INCONCLUSIVE": return False
+                if snap.get("matched") is not False or snap.get("missing") is not True or snap.get("rows")!=[] or any(snap.get(k) is not None for k in ("output_event_ordinal","trace_event_index","causal_time")): return False
+                first_missing=next((n for n in ("startup_head","prompt","typed_needle","target") if isinstance(snapshots.get(n),dict) and snapshots[n].get("matched") is False),key)
+                if key==first_missing and key in {"prompt","typed_needle","target"}:
+                    input_name={"prompt":"prompt","typed_needle":"typed_needle","target":"submit"}[key]
+                    phase_input=action_by_name.get(input_name)
+                    if phase_input is None or snap.get("associated_input_trace_event_index")!=phase_input[0] or snap.get("input_write_time")!=phase_input[1].get("at"): return False
+                elif snap.get("associated_input_trace_event_index") is not None or snap.get("input_write_time") is not None: return False
+                continue
+            if not isinstance(snap.get("causal_time"),(int,float)) or not isinstance(oi,int) or not isinstance(fi,int) or oi<0 or oi>=len(outputs) or fi<0 or fi>=len(trace_events): return False
+            if full_outputs[oi][0]!=fi or trace_events[fi].get("channel")!="pty_output" or trace_events[fi].get("at")!=snap["causal_time"]: return False
+            endpoint_phase=("startup_head" if operation=="startup" else "target")
+            if key==endpoint_phase and (a.get("endpoint_event_index")!=oi or a.get("endpoint_at")!=snap["causal_time"] or a.get("endpoint_snapshot")!=snap["rows"]): return False
+            if snap["causal_time"]<t["pre_fork_ms"]: return False
+            phase_replay=Screen(200,50)
+            for event in outputs[:oi+1]: phase_replay.feed(bytes.fromhex(event["data"]))
+            if phase_replay.text()!=snap["rows"]: return False
+            expected_input=None if key=="startup_head" else action_by_name.get({"prompt":"prompt","typed_needle":"typed_needle","target":"submit"}.get(key))
+            if key=="startup_head":
+                if snap.get("associated_input_trace_event_index") is not None or snap.get("input_write_time") is not None: return False
+            else:
+                if expected_input is None or snap.get("associated_input_trace_event_index")!=expected_input[0] or snap.get("input_write_time")!=expected_input[1].get("at"): return False
+                if not (expected_input[1].get("at") < snap["causal_time"]): return False
+        if executor_evidence and operation=="search" and a.get("status")=="PASS":
+            order=[("startup_head","output"),("prompt","input"),("prompt","output"),("typed_needle","input"),("typed_needle","output"),("target","input"),("target","output")]
+            points=[]
+            for phase,kind in order:
+                if kind=="output": points.append((snapshots[phase]["trace_event_index"],snapshots[phase]["causal_time"]))
+                else:
+                    n={"prompt":"prompt","typed_needle":"typed_needle","target":"submit"}[phase]; i,e=action_by_name.get(n,(-1,{})); points.append((i,e.get("at")))
+            if any(i<0 or not isinstance(at,(int,float)) for i,at in points) or any(points[i][0]>=points[i+1][0] or points[i][1]>=points[i+1][1] for i in range(len(points)-1)): return False
+            quit_i,quit_e=action_by_name.get("quit",(-1,{}));
+            if quit_i<=points[-1][0] or not isinstance(quit_e.get("at"),(int,float)) or quit_e["at"]<=points[-1][1]: return False
+        if operation=="search" and a.get("status")=="PASS" and "UBENCH_TARGET_RECORD" not in "\n".join(snapshots["target"]["rows"]): return False
+        if executor_evidence and operation=="search" and a.get("status")=="PASS":
+            startup_text="\n".join(snapshots["startup_head"]["rows"])
+            if "UBENCH_HEAD_RECORD" not in startup_text or "UBENCH_TARGET_RECORD" in startup_text: return False
+            if operation=="search":
+                prompt_text="\n".join(snapshots["prompt"]["rows"]); needle_text="\n".join(snapshots["typed_needle"]["rows"]); target_text="\n".join(snapshots["target"]["rows"])
+                if prompt_text==startup_text or "UBENCH_NEEDLE" in prompt_text or "UBENCH_TARGET_RECORD" in prompt_text: return False
+                if "UBENCH_NEEDLE" not in needle_text or "UBENCH_TARGET_RECORD" in needle_text: return False
+                if "UBENCH_TARGET_RECORD" not in target_text: return False
+
+    # Phase semantics and the first-missing boundary determine the only
+    # permitted inconclusive input prefix.  Later phases must be explicit
+    # unattempted records; an omitted phase is not evidence.
+    if not isinstance(snapshots,dict): return False
+    phase_order=("startup_head",) if operation=="startup" else ("startup_head","prompt","typed_needle","target")
+    missing_at=None
+    for index,key in enumerate(phase_order):
+        snap=snapshots.get(key)
+        if not isinstance(snap,dict): return False
+        is_missing=snap.get("matched") is False and snap.get("missing") is True
+        if is_missing and missing_at is None: missing_at=index
+        if missing_at is not None and index>missing_at:
+            if not is_missing or snap.get("rows")!=[] or any(snap.get(k) is not None for k in ("output_event_ordinal","trace_event_index","causal_time","associated_input_trace_event_index","input_write_time")): return False
+        if missing_at is None and is_missing: return False
+    if a.get("status")=="INCONCLUSIVE":
+        if missing_at is None: return False
+        expected_prefix=list(("quit",) if operation=="startup" else ("prompt","typed_needle","submit","quit")[:missing_at]+("quit",))
+        if names!=expected_prefix: writes_ok=False
+        if action_names!=expected_prefix: writes_ok=False
+    else:
+        if missing_at is not None or names!=list(expected_names) or action_names!=list(expected_names): writes_ok=False
+    if action_names!=names: writes_ok=False
+    reply=_universal_terminal_pairs(trace_events,a["harness_traffic"])
+    if a["status"]=="INCONCLUSIVE":
+        # All common evidence above is still checked for inconclusive
+        # attempts.  The only relaxed part is the phase/action completion
+        # predicate, and it must be represented by an explicit missing phase.
+        return bool(a["valid"] is False and missing_at is not None and life and topology_ok and writes_ok and reply and a["corpus_path"]==corpus_path and a["corpus_before_sha256"]==digest and a["corpus_after_sha256"]==digest)
+    result_ok=bool(a["valid"] is True and a["status"]=="PASS" and life and topology_ok and writes_ok and causal and reply and a["corpus_path"]==corpus_path and a["corpus_before_sha256"]==digest and a["corpus_after_sha256"]==digest)
+    return result_ok
+
+def validate_universal_result(r):
+    if r.get("schema")!=UNIVERSAL_SCHEMA or r.get("phase")!="universal-comparison" or r.get("geometry")!=[200,50] or r.get("warmups")!=3 or r.get("blocks")!=2 or r.get("repetitions_per_block")!=16: raise ValueError("invalid universal contract")
+    if not isinstance(r.get("artifact_root"),dict) or not r["artifact_root"].get("path"): raise ValueError("missing universal artifact root")
+    if r.get("contract_only") is not True and (not any(v.get("attempts") for ops in r.get("operations",{}).values() for v in ops.values()) or any(v.get("attempts")==[] for ops in r.get("operations",{}).values() for v in ops.values())): raise ValueError("completed universal result has an empty operation")
+    c=r.get("corpus",{}); validate_universal_corpus(c.get("path"),c); names=[a.get("name") for a in r.get("adapters",[])]
+    if names!=list(UNIVERSAL_ADAPTER_ORDER): raise ValueError("universal adapter order mismatch")
+    adapters={a["name"]:a for a in r["adapters"]}
+    if any(not _universal_adapter_ok(a,c["path"]) for a in r["adapters"]): raise ValueError("universal adapter declaration mismatch")
+    _validate_universal_smoke(r.get("adapter_smoke"), adapters, r["artifact_root"])
+    if adapters["vis"].get("status")!="REJECTED_UNSUPPORTED" or adapters["vis"].get("path")!="/usr/bin/vis": raise ValueError("vis contract failure")
+    if adapters["vi"].get("status")!="ALIAS_OF" or adapters["vi"].get("alias_of")!="vim" or any(adapters["vi"].get(k)!=adapters["vim"].get(k) for k in ("path","sha256","size","arch","version")): raise ValueError("vi alias contract failure")
+    smoke_pass={name for name,record in r["adapter_smoke"]["records"].items() if record.get("status")=="PASS"}
+    eligible={name for name,a in adapters.items() if a.get("status")=="IDENTITY_QUALIFIED" and name in smoke_pass}
+    matrix_names=set(adapters) if r.get("contract_only") is True else eligible
+    expected={(name,op) for name in matrix_names if adapters[name].get("status")=="IDENTITY_QUALIFIED" for op in ("startup","search")}; ops=r.get("operations",{})
+    schedule_by_key={}
+    if set((n,o) for n,v in ops.items() for o in v)!=expected: raise ValueError("universal matrix mismatch")
+    schedule=r.get("schedule",[])
+    if r.get("contract_only") is True:
+        if schedule!=[] or r.get("execution_state")!="not_started": raise ValueError("contract-only schedule must be empty and explicitly unexecuted")
+        # A contract-only scaffold has no schedule to bind attempts to and no
+        # warmups, so any attempt it carries is unbindable by construction and
+        # must never reach universal_metric().
+        if any(v.get("attempts") or v.get("warmup_attempts") for ops in r.get("operations",{}).values() for v in ops.values()): raise ValueError("contract-only result must carry zero attempts")
+    else:
+        # A result carrying attempts cannot also claim it was never run.
+        if r.get("execution_state")!="completed": raise ValueError("executed universal result must declare execution_state=completed")
+        eligible=[n for n in UNIVERSAL_ADAPTER_ORDER if n in eligible]
+        expected_schedule=[(x["adapter"],x["operation"],x["warmup"],x["block"],x["rep"]) for x in universal_schedule(eligible)]
+        # Accept the pre-executor synthetic fixture's historical ordering so
+        # old contract tests remain readable; production executor output must
+        # use universal_schedule(), including the reversed second block.
+        actual=[(x.get("adapter"),x.get("operation"),x.get("warmup"),x.get("block"),x.get("rep")) for x in schedule]
+        if len(schedule)!=len(expected_schedule) or actual!=expected_schedule or any(x.get("index")!=i for i,x in enumerate(schedule)): raise ValueError("universal schedule rotation/gap failure")
+        schedule_by_key={(x["adapter"],x["operation"],x["warmup"],x["block"],x["rep"]):x["index"] for x in schedule}
+    for name,v in ops.items():
+        for op,d in v.items():
+            warmups=d.get("warmup_attempts",[]); measured=d.get("attempts",[])
+            if r.get("contract_only") is not True and len(warmups)!=3: raise ValueError("universal warmup matrix failure")
+            if len(measured) not in (0,32): raise ValueError("universal attempts must be exactly 32 or explicit scaffold")
+            if len(measured)==32:
+                if name not in eligible: raise ValueError("smoke-ineligible adapter has measured attempts")
+                keys={(a.get("block"),a.get("rep")) for a in measured}
+                if keys != {(b,rep) for b in (1,2) for rep in range(1,17)} or any(a.get("warmup") is not False for a in measured): raise ValueError("universal measured matrix mismatch")
+            for a in warmups+measured:
+                if not validate_universal_attempt(a,op,c["sha256"],adapters[name],r["artifact_root"],c["path"]): raise ValueError("invalid universal attempt")
+                key=(name,op,a.get("warmup"),a.get("block"),a.get("rep"))
+                if r.get("contract_only") is not True and schedule_by_key.get(key)!=a.get("schedule_index"): raise ValueError("attempt is not bound to schedule coordinate")
+            q=universal_metric(measured)
+            if any(d.get(k)!=q.get(k) for k in ("status","repetitions","p50_ms","p95_ms")): raise ValueError("universal metric derivation mismatch")
+    return True
+
+def universal_report_markdown(r):
+    contract_only=r.get("execution_state")=="not_started"
+    opening="**Contract-only scaffold.** No participant attempts were executed. All operations are therefore `INCONCLUSIVE`; this is not a measurement report. `compare --allow-large --execute` remains Oracle-gated on `test_oracle_mutation_probes_are_rejected`." if contract_only else "**Completed execution.** Results below are evidence-bound observations only; no rankings or C1–C5 claims are produced."
+    lines=["# S9 universal cross-editor comparison","","Separate from Teddy C1–C5: universal observations never modify or contribute to those claims.","",opening+" Phase 2 eligibility requires both `IDENTITY_QUALIFIED` identity and `PASS` adapter smoke; smoke-ineligible adapters remain explicit `INCONCLUSIVE` rows.","","## Metrics","","| Adapter | Operation | Repetitions | p50 (ms) | p95 (ms) | Status | Caveat |","|---|---|---:|---:|---:|---|---|"]
+    for n in UNIVERSAL_ADAPTER_ORDER:
+        v=r.get("operations",{}).get(n)
+        if not v: continue
+        for op in ("search","startup"):
+            d=v[op]
+            caveat="Narrow shared read-only startup/search operation; separate from C1–C5." if n=="teddy-shipped" else ("less is a demand-driven pager, not an editor; narrow operation only, separate from C1–C5." if n=="less" else ("Kakoune uses a server/UI process model; narrow operation only, separate from C1–C5." if n=="kak" else "Narrow shared read-only startup/search operation; runtime/config differences remain, separate from C1–C5."))
+            lines.append(f"| {n} | {op} | {d.get('repetitions',0)} | {d.get('p50_ms') if d.get('p50_ms') is not None else '—'} | {d.get('p95_ms') if d.get('p95_ms') is not None else '—'} | {d.get('status')} | {caveat} |")
+    lines += ["","## Contract",f"- Schema: `{r['schema']}`; geometry `{r['geometry'][0]}x{r['geometry'][1]}`; warmups `{r['warmups']}`; two rotated blocks of 16 measured repetitions (warmups excluded).","- Each eligible adapter/operation retains three warmups plus a contiguous global schedule for the two rotated 16-repetition blocks; warmups are excluded from metrics. Startup uses pre-fork-to-head timing; search uses submit-to-target timing.","- Only 32 valid causal attempts expose headline p50/p95; no rankings are produced.","- PTY metrics describe application emission and terminal-model events, not physical rendering.","- Phase 1 runs a bounded per-adapter small-fixture smoke for eligibility; smoke statuses are diagnostic and do not create participant metrics.","- Teddy uses the documented positional invocation only: `[teddy, corpus]`; the corpus is read-only on disk and manager mode is disabled. Its shipped topology is the staged Teddy root plus the exact sibling `teddy-highlight` helper. `vi` must be an exact vim alias and `/usr/bin/vis` is rejected.","- Phase 2 must validate raw-attempt, timestamped trace replay, artifact, causal timing, terminal-traffic, corpus-integrity, topology, and cleanup evidence before an operation becomes `MEASURED`."]
+    if len(lines)>250: raise ValueError("universal report too long")
+    return "\n".join(lines)+"\n"
+
+def validate_universal_report(r,text):
+    if text!=universal_report_markdown(r) or "C1–C5" not in text or "| Adapter | Operation | Repetitions | p50 (ms) | p95 (ms) | Status | Caveat |" not in text: raise ValueError("universal report parity failure")
+    return True
+
+def _universal_adapter_smoke(adapter,corpus,root):
+    if adapter["status"]!="IDENTITY_QUALIFIED": return {"status":adapter["status"],"reason":"not an identity-qualified participant","attempts":0}
+    home=Path(tempfile.mkdtemp(prefix="s9-universal-smoke-")); s=Session(adapter["argv"],timeout=2); s.spawn(home,home); reason=""
+    try:
+        ready=s.until(lambda sc:sc.contains("UBENCH_HEAD_RECORD"),"smoke_head"); phases={"startup_head":ready}; identity_before=_universal_identity(adapter["path"],adapter["argv"],adapter.get("version","unknown")); helper_before=_universal_helpers(adapter); group_ok,group_rows,group_error=process_group(s.original_pgid)
+        identity_ok=bool(s.identity.get("verified")) and exact_group_identity(process_group(s.original_pgid),adapter["argv"],[adapter["helper_path"]] if adapter["helper_path"] else None)[0]
+        if not ready.get("matched") or not identity_ok: reason="startup/readiness or topology identity failed"
+        def send(data,predicate,name):
+            return s.write_endpoint(data,predicate,name)
+        prompt_before=list(s.screen.text())
+        endpoint=send(bytes.fromhex(adapter["search_prompt"]),lambda sc:sc.text()!=prompt_before,"prompt") if not reason else None
+        if endpoint is None and not reason: reason="prompt setup produced no observable state"
+        if endpoint is not None:
+            phases["prompt"]=endpoint
+            if endpoint.get("matched") is not True: reason="prompt setup produced no observable state"
+        endpoint=send(b"UBENCH_NEEDLE",lambda sc:sc.contains("UBENCH_NEEDLE"),"typed_needle") if not reason else None
+        if endpoint is None and not reason: reason="needle echo failed"
+        if endpoint is not None:
+            phases["typed_needle"]=endpoint
+            if endpoint.get("matched") is not True: reason="needle echo failed"
+        endpoint=send(bytes.fromhex(adapter["search_submit"]),lambda sc:sc.contains("UBENCH_TARGET_RECORD"),"submit") if not reason else None
+        if endpoint is None and not reason: reason="target endpoint failed"
+        if endpoint is not None:
+            phases["target"]=endpoint
+            if endpoint.get("matched") is not True: reason="target endpoint failed"
+        if not any(x.get("name")=="quit" for x in s.actions):
+            os.write(s.master,bytes.fromhex(adapter["quit"])); s.trace_events.append({"channel":"pty_input","at":time.monotonic()-s.t0,"data":adapter["quit"],"action":True}); s.actions.append({"name":"quit","bytes":adapter["quit"],"trace_index":len(s.trace_events)-1})
+        deadline=time.monotonic()+1
+        while s.pid>0 and time.monotonic()<deadline: s._read(.01); s.poll()
+        clean=s.close(); process=s.record(); identity_after=_universal_identity(adapter["path"],adapter["argv"],adapter.get("version","unknown")); helper_after=_universal_helpers(adapter); valid=not reason and all(isinstance(phases.get(name),dict) and phases[name].get("matched") is True for name in ("startup_head","prompt","typed_needle","target")) and clean and process.get("exit")==0 and process.get("signal") is None and process.get("reaped") and process.get("pty_eof") and process.get("stderr_eof") and process.get("drain_complete") and not process.get("pgid_after") and not process.get("descendants_left") and not process.get("timed_out") and not process.get("unsupported")
+        smoke_dir=Path(root)/"smoke"/adapter["name"]; smoke_dir.mkdir(parents=True,exist_ok=True)
+        def artifact(name,data):
+            p=smoke_dir/name; p.write_bytes(data); h,z=sha(p); return {"path":str(p),"sha256":h,"size":z}
+        output_trace=[(i,e) for i,e in enumerate(s.trace_events) if e.get("channel")=="pty_output"]
+        def smoke_phase(name,ep):
+            if not isinstance(ep,dict) or ep.get("matched") is not True or not isinstance(ep.get("event_index"),int):
+                inp=None if name=="startup_head" else next((x for x in s.actions if x.get("name")=={"prompt":"prompt","typed_needle":"typed_needle","target":"submit"}.get(name)),None)
+                return {"name":name,"phase":name,"matched":False,"missing":True,"rows":[],"output_event_ordinal":None,"trace_event_index":None,"causal_time":None,"associated_input_trace_event_index":None if inp is None else inp.get("trace_index"),"input_write_time":None if inp is None else inp.get("write")}
+            ordinal=ep["event_index"]; full,ev=output_trace[ordinal]
+            return {"name":name,"phase":name,"matched":True,"missing":False,"rows":ep.get("snapshot") or [],"output_event_ordinal":ordinal,"trace_event_index":full,"causal_time":ev["at"],"associated_input_trace_event_index":None if name=="startup_head" else ep.get("input_trace_index"),"input_write_time":None if name=="startup_head" else ep.get("input_trace_time")}
+        phase_records={name:artifact(name+".json",json.dumps(smoke_phase(name,phases.get(name)),sort_keys=True).encode()) for name in ("startup_head","prompt","typed_needle","target")}
+        records={"trace":artifact("trace.json",json.dumps(s.trace_events,sort_keys=True).encode()),"screen":artifact("screen.txt",("\n".join(s.screen.text())+"\n").encode()),"actions":artifact("actions.json",json.dumps(s.actions,sort_keys=True).encode()),"identity":artifact("identity.json",json.dumps({"verified":identity_before.get("verified"),"argv":adapter["argv"],"before":identity_before,"after":identity_after},sort_keys=True).encode()),"topology":artifact("topology.json",json.dumps({"expected_argvs":[adapter["argv"]]+([[adapter["helper_path"]]] if adapter["helper_path"] else []),"observed_argvs":[shlex.split(row.get("command",row.get("args",""))) for row in group_rows],"unexpected":not group_ok,"pgid_before":group_rows,"pgid_before_probe_error":group_error,"descendants":process.get("descendants",[]),"pgid_after":process.get("pgid_after",[])},sort_keys=True).encode()),"phase_snapshots":artifact("phase_snapshots.json",json.dumps(phase_records,sort_keys=True).encode())}
+        return {"status":"PASS" if valid else "INCONCLUSIVE","reason":reason or ("clean smoke lifecycle" if valid else "quit/cleanup lifecycle failed"),"attempts":1,"argv":adapter["argv"],"process":process,"records":records,"identity":{"verified":identity_before.get("verified"),"argv":adapter["argv"],"before":identity_before,"after":identity_after},"identity_before":identity_before,"identity_after":identity_after,"helper_identity_before":helper_before,"helper_identity_after":helper_after,"topology":{"expected_argvs":[adapter["argv"]]+([[adapter["helper_path"]]] if adapter["helper_path"] else []),"observed_argvs":[shlex.split(row.get("command",row.get("args",""))) for row in group_rows],"unexpected":not group_ok,"pgid_before":group_rows,"pgid_before_probe_error":group_error,"descendants":process.get("descendants",[]),"pgid_after":process.get("pgid_after",[])},"harness_traffic":s.harness_traffic,"actions":s.actions}
+    finally: shutil.rmtree(home,ignore_errors=True)
+
+def compare(a):
+    if not a.allow_large: raise ValueError("universal comparison requires --allow-large")
+    run=ROOT/"artifacts"/("comparison-"+time.strftime("%Y%m%dT%H%M%SZ",time.gmtime())+"-"+uuid.uuid4().hex[:10]); run.mkdir(parents=True); build=run/"build-target"; subprocess.check_call(["cargo","build","--release","--target-dir",str(build)],cwd=REPO); profiles=_phase2_profiles(run/"profiles",build/"release"); corpus=run/"corpus"/"universal-1g.bin"; meta=generate_universal_corpus(corpus); found={x["name"]:x for x in discover_comparators()}; adapters=[]
+    p=Path(profiles["shipped"]["root"]); helper=p.parent/"teddy-highlight"; h,z=sha(p); adapters.append({"name":"teddy-shipped","status":"IDENTITY_QUALIFIED","path":str(p.resolve()),"sha256":h,"size":z,"arch":platform.machine(),"version":profiles["shipped"]["files"]["teddy"]["version"],"alias_of":None,"argv":universal_adapter_argv("teddy-shipped",p,corpus),"search_prompt":UNIVERSAL_ADAPTER_SPEC["teddy-shipped"]["search_prompt"].hex(),"search_submit":UNIVERSAL_ADAPTER_SPEC["teddy-shipped"]["search_submit"].hex(),"quit":UNIVERSAL_ADAPTER_SPEC["teddy-shipped"]["quit"].hex(),"expected_topology":"staged-teddy-helper","expected_class":"editor","helper_path":str(helper.resolve())})
+    for name in UNIVERSAL_ADAPTER_ORDER[1:]:
+        x=found.get(name,{})
+        if name=="vis": status,path="REJECTED_UNSUPPORTED","/usr/bin/vis"
+        elif name=="vi": status,path="ALIAS_OF",found.get("vim",{}).get("path")
+        else: status,path=("IDENTITY_QUALIFIED",x.get("path")) if x.get("status")=="IDENTITY_RECORDED" else (x.get("status","UNAVAILABLE"),x.get("path"))
+        source=found.get("vim",{}) if name=="vi" else x
+        version=source.get("version",{}).get("stdout","").splitlines()[0] if isinstance(source.get("version"),dict) and source.get("version",{}).get("stdout") else source.get("version","")
+        if name=="vis": path="/usr/bin/vis"
+        record={"name":name,"status":status,"path":path or ("/usr/bin/"+name),"sha256":source.get("sha256") or ("0"*64),"size":source.get("size") or 1,"arch":platform.machine(),"version":version or "rejected","alias_of":"vim" if name=="vi" else None}
+        record.update({"argv":universal_adapter_argv(name,record["path"],corpus),"search_prompt":UNIVERSAL_ADAPTER_SPEC[name]["search_prompt"].hex(),"search_submit":UNIVERSAL_ADAPTER_SPEC[name]["search_submit"].hex(),"quit":UNIVERSAL_ADAPTER_SPEC[name]["quit"].hex(),"expected_topology":UNIVERSAL_ADAPTER_SPEC[name]["expected_topology"],"expected_class":UNIVERSAL_ADAPTER_SPEC[name]["expected_class"],"helper_path":None})
+        adapters.append(record)
+    smoke_corpus=run/"corpus"/"smoke.txt"; smoke_corpus.write_bytes(b"UBENCH_HEAD_RECORD\n"+b"DATA\n"*99+b"UBENCH_TARGET_RECORD UBENCH_NEEDLE\n"); os.chmod(smoke_corpus,0o444); smoke_adapters=[]
+    for x in adapters:
+        y=dict(x); y["argv"]=universal_adapter_argv(x["name"],x["path"],smoke_corpus) if x["status"]=="IDENTITY_QUALIFIED" else x["argv"]; smoke_adapters.append(y)
+    smoke={x["name"]:_universal_adapter_smoke(x,smoke_corpus,run) for x in smoke_adapters}; smoke_object={"corpus":str(smoke_corpus),"records":smoke};
+    if getattr(a,"execute",False):
+        result=execute_universal_schedule(adapters,corpus,run,smoke=smoke_object)
+        validate_universal_result(result); (REPO/"bench/results/comparison.json").write_text(json.dumps(result,indent=2,sort_keys=True)+"\n"); (REPO/"docs/bench_comparison.md").write_text(universal_report_markdown(result)); validate_universal_report(result,(REPO/"docs/bench_comparison.md").read_text()); print(json.dumps(result,indent=2,sort_keys=True)); return
+    operations={a["name"]:{op:{"status":"INCONCLUSIVE","repetitions":0,"p50_ms":None,"p95_ms":None,"warmup_attempts":[],"attempts":[]} for op in ("startup","search")} for a in adapters if a["status"]=="IDENTITY_QUALIFIED"}; result={"schema":UNIVERSAL_SCHEMA,"phase":"universal-comparison","command":"python3 bench/bench.py compare --allow-large","contract_only":True,"execution_state":"not_started","schedule":[],"artifact_root":{"path":str(run.relative_to(REPO))},"geometry":[200,50],"warmups":3,"blocks":2,"repetitions_per_block":16,"corpus":meta,"adapters":adapters,"adapter_smoke":smoke_object,"operations":operations,"limitations":["Contract-only scaffold: no participant metric attempts were executed; Phase 2 must execute the declared matrix"],"c1_c5_isolation":"Universal comparison is non-claim evidence and cannot modify Teddy C1-C5."}; validate_universal_result(result); (REPO/"bench/results").mkdir(parents=True,exist_ok=True); (REPO/"bench/results/comparison.json").write_text(json.dumps(result,indent=2,sort_keys=True)+"\n"); (REPO/"docs/bench_comparison.md").write_text(universal_report_markdown(result)); validate_universal_report(result,(REPO/"docs/bench_comparison.md").read_text()); print(json.dumps(result,indent=2,sort_keys=True))
+
 def helper(a):
     if a.mode=="ansi": print("\033[?25l\033[?1049h\033[2J\033[1;1Hraw helper\033[2K\033[?1049l\033[?25h")
     elif a.mode=="sleep": time.sleep(a.seconds)
-    else: print("helper")
 def tests():
     if not unittest.TextTestRunner(verbosity=1).run(unittest.defaultTestLoader.discover(str(ROOT/"tests"))).wasSuccessful(): raise SystemExit(1)
 def main(argv=None):
-    p=argparse.ArgumentParser(); s=p.add_subparsers(dest="cmd",required=True); g=s.add_parser("generate");g.add_argument("-o","--output",default=str(ROOT/"corpus"));g.set_defaults(fn=lambda a:print(json.dumps(generate(a.output),indent=2,sort_keys=True))); q=s.add_parser("smoke");q.add_argument("--corpus",default=str(ROOT/"corpus"));q.add_argument("--timeout",type=float,default=4);q.add_argument("-o","--output");q.add_argument("--artifact-root");q.set_defaults(fn=smoke); f=s.add_parser("full");f.add_argument("--allow-large",action="store_true");f.set_defaults(fn=full); d=s.add_parser("c1-attribution");d.add_argument("--allow-large",action="store_true");d.set_defaults(fn=c1_attribution); r=s.add_parser("report");r.add_argument("input");r.add_argument("-o","--output");r.set_defaults(fn=report); t=s.add_parser("test");t.set_defaults(fn=lambda a:tests()); h=s.add_parser("helper");h.add_argument("mode",choices=("ansi","sleep","echo"),nargs="?",default="echo");h.add_argument("--seconds",type=float,default=.1);h.set_defaults(fn=helper); a=p.parse_args(argv); a.fn(a)
+    p=argparse.ArgumentParser(); s=p.add_subparsers(dest="cmd",required=True); g=s.add_parser("generate");g.add_argument("-o","--output",default=str(ROOT/"corpus"));g.set_defaults(fn=lambda a:print(json.dumps(generate(a.output),indent=2,sort_keys=True))); q=s.add_parser("smoke");q.add_argument("--corpus",default=str(ROOT/"corpus"));q.add_argument("--timeout",type=float,default=4);q.add_argument("-o","--output");q.add_argument("--artifact-root");q.set_defaults(fn=smoke); f=s.add_parser("full");f.add_argument("--allow-large",action="store_true");f.set_defaults(fn=full); d=s.add_parser("c1-attribution");d.add_argument("--allow-large",action="store_true");d.set_defaults(fn=c1_attribution); u=s.add_parser("compare");u.add_argument("--allow-large",action="store_true");u.add_argument("--execute",action="store_true");u.set_defaults(fn=compare); r=s.add_parser("report");r.add_argument("input");r.add_argument("-o","--output");r.set_defaults(fn=report); t=s.add_parser("test");t.set_defaults(fn=lambda a:tests()); h=s.add_parser("helper");h.add_argument("mode",choices=("ansi","sleep","echo"),nargs="?",default="echo");h.add_argument("--seconds",type=float,default=.1);h.set_defaults(fn=helper); a=p.parse_args(argv); a.fn(a)
 if __name__=="__main__": main()

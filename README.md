@@ -26,6 +26,7 @@ in [`docs/build.md`](docs/build.md).
 - [Plugin contract](docs/plugin-contract.md)
 - [Configuration](docs/config-spec.md)
 - [Themes](docs/theme-spec.md)
+- [Benchmark methodology](docs/bench_plan.md) and [results](docs/bench_results.md)
 - [Crate documentation](https://docs.rs/teddytor)
 
 Plugins are independent executables communicating over teddy's framed stdin/
@@ -64,6 +65,54 @@ The `teddytor` package also produces bundled sibling executables, including
 `ai` and currently replies `ai shell: no provider configured`; it has no AI
 provider or functional AI configuration. See the [cheatsheet](docs/cheatsheet.md)
 for direct use.
+
+## Benchmarks
+
+The harness lives in `bench/` and is plain Python 3 with no dependencies. It
+drives real `teddy` processes over a controlling 200×50 PTY and derives every
+number from hash-bound artifacts rather than from timing code's own reports.
+
+```sh
+python3 bench/bench.py test                       # harness self-tests
+python3 bench/bench.py smoke -o /tmp/s9.json      # Phase 1: bounded health smoke
+python3 bench/bench.py report /tmp/s9.json -o /tmp/s9.md
+python3 -m unittest discover -s bench/tests -p 'test_*.py'
+```
+
+Phase 1 publishes no claims: every result carries `phase: "phase1"` and all
+claims stay `NOT_MEASURED`. Phase 2 is explicit and opt-in
+(`python3 bench/bench.py full --allow-large`); it generates the 1 GiB corpus
+and is the only mode that can turn a claim into `PASS`.
+
+Current Phase 2 status, from [`docs/bench_results.md`](docs/bench_results.md):
+
+| Claim | Status | What it measures |
+|---|---|---|
+| C1 open latency | **PASS** | p95 < 50 ms on a 1 GiB file; bare 4.29 ms, shipped 6.86 ms |
+| C2 frame latency | INCONCLUSIVE | perf p95 `2030.4` us parsed, but action association not established |
+| C3 search/cancel | INCONCLUSIVE | real search and cancel attempts retained; semantics not associated |
+| C4 save integrity | **PASS** | 4/4 fixture/profile digest checks; saved bytes byte-identical |
+| C5 memory | NOT_MEASURED | RSS sampled for diagnosis only; no budget is claimed |
+
+C1 elapsed time starts at the post-fork harness clock, so it is PTY-readiness
+time rather than complete process-launch latency. See
+[`docs/bench_plan.md`](docs/bench_plan.md) for the full methodology and its
+shared caveats.
+
+### Cross-editor comparison
+
+`python3 bench/bench.py compare --allow-large` builds a separate universal
+comparison against nvim, vim, hx, kak, and less. The checked-in result
+([`docs/bench_comparison.md`](docs/bench_comparison.md)) is a **contract-only
+scaffold**: no participant attempts have been executed, so every row is
+`INCONCLUSIVE` and it is not a measurement report.
+
+Execution is gated on an adversarial oracle,
+`test_oracle_mutation_probes_are_rejected`, which mutates a valid result and
+asserts each inconsistency is rejected — timings detached from the trace,
+stripped lifecycle evidence, self-attested binary digests, and scaffolds
+carrying metrics. The gate is that the oracle passes *and* every check it
+covers still fails when removed, so the probes cannot quietly go blind.
 
 ## Releases
 
