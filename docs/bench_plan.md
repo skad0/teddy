@@ -218,8 +218,18 @@ coordinate, persists raw/filtered PTY trace, replay-bound phase and endpoint
 screens, action writes, lifecycle, observed process-group rows, and before /
 after executable identity. A completed result is rejected unless every
 warmup and measured coordinate is present and causally bound; the second
-measured block is reversed. The checked-in `compare --allow-large` result
-remains contract-only.
+measured block is reversed.
+
+The checked-in result is now an executed one: `teddy-shipped` is `MEASURED`
+for both operations on 32 valid attempts each, and every other participant is
+an explicit `INCONCLUSIVE` row carrying its exclusion reason. Only
+`teddy-shipped` passed the eligibility smoke. The other five drive terminal
+features this screen model does not implement — mouse tracking, bracketed
+paste, cursor shape, DECRQM — so their sessions do not end cleanly, and `less`
+never matched the head marker. That is a limit of the harness, not a
+measurement of those editors: they are ineligible, not slow. Making them
+measurable means implementing those features in the screen model, not
+loosening the smoke.
 
 `compare --allow-large --execute` is gated by the Phase 1 Oracle, which is a
 runnable adversarial check rather than a scheduled human review:

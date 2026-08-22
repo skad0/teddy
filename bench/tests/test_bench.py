@@ -413,6 +413,113 @@ class Phase1Tests(unittest.TestCase):
         self.assertTrue(s.write(b"/UBENCH_NEEDLE\r",lambda sc:sc.contains("UBENCH_TARGET_RECORD"),"search")); self.assertTrue(s.close())
         record=s.record(); self.assertEqual(record["exit"],0); self.assertTrue(any(x["kind"]=="DSR_REPLY" for x in record["harness_traffic"])); self.assertTrue(any(x["kind"]=="DA_REPLY" for x in record["harness_traffic"])); self.assertFalse(record["descendants_left"]); self.assertTrue(record["drain_complete"])
 
+    def test_unclean_smoke_is_inconclusive_evidence_not_a_hard_failure(self):
+        """An unclean lifecycle must downgrade a participant, not abort the run.
+
+        Real editors emit sequences this screen model does not implement, so
+        every comparator lands here. Raising made the whole comparison
+        unrunnable; the contract is that a failed smoke records INCONCLUSIVE
+        and simply cannot manufacture metrics.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d); adapters=[]
+            for name in bench.UNIVERSAL_ADAPTER_ORDER:
+                p=root/name; path="/usr/bin/vis" if name=="vis" else str(p)
+                if name!="vis": p.write_bytes(name.encode())
+                status="REJECTED_UNSUPPORTED" if name=="vis" else ("ALIAS_OF" if name=="vi" else "IDENTITY_QUALIFIED")
+                spec=bench.UNIVERSAL_ADAPTER_SPEC[name]
+                adapters.append({"name":name,"status":status,"path":path,"sha256":"a"*64,"size":10,"arch":"arm64","version":"v1","alias_of":"vim" if name=="vi" else None,"argv":bench.universal_adapter_argv(name,path,str(root/"corpus")),"search_prompt":spec["search_prompt"].hex(),"search_submit":spec["search_submit"].hex(),"quit":spec["quit"].hex(),"expected_topology":spec["expected_topology"],"expected_class":spec["expected_class"],"helper_path":str(root/"teddy-highlight") if name=="teddy-shipped" else None})
+            (root/"teddy-highlight").write_bytes(b"helper")
+            for x in adapters:
+                if x["name"]!="vis": x["sha256"],x["size"]=bench.sha(x["path"])
+            smoke=self._strict_smoke(root,adapters); by_name={a["name"]:a for a in adapters}
+            bench._validate_universal_smoke(smoke,by_name,{"path":str(root)})  # baseline: clean PASS validates
+            record=smoke["records"]["nvim"]
+            record["process"]["unsupported"]=["?1002h","2 q"]; record["status"]="INCONCLUSIVE"; record["reason"]="unsupported terminal sequences"
+            bench._validate_universal_smoke(smoke,by_name,{"path":str(root)})
+            # The same unclean lifecycle may not be dressed up as a PASS.
+            record["status"]="PASS"
+            with self.assertRaises(ValueError): bench._validate_universal_smoke(smoke,by_name,{"path":str(root)})
+            # Unclean is allowed; incomplete is not. Relaxing cleanliness for
+            # INCONCLUSIVE must not also let the record go silent.
+            record["status"]="INCONCLUSIVE"
+            for field in ("signal","reaped","drain_complete","timed_out","exec_failed"):
+                stripped=json.loads(json.dumps(record)); stripped["process"].pop(field)
+                with self.assertRaises(ValueError,msg=f"INCONCLUSIVE record missing {field} accepted"):
+                    bench._validate_universal_smoke({**smoke,"records":{**smoke["records"],"nvim":stripped}},by_name,{"path":str(root)})
+
+    def test_participant_that_never_starts_is_validatable(self):
+        """A participant failing at startup_head must still validate.
+
+        startup_head has no input action to associate, so requiring one made
+        any such record unvalidatable -- which is what `less` produces, and it
+        aborted the whole comparison rather than marking it ineligible.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d); corpus=root/"smoke.txt"; corpus.write_bytes(b"nothing useful here\n"); os.chmod(corpus,0o444)
+            script=root/"silent.py"; script.write_text('import os,time\nos.write(1, b"\\033[6n\\033[c")\nos.write(1, b"NO_MARKER_HERE\\n")\nwhile True:\n    c=os.read(0,1)\n    if not c or c==b"q": os._exit(0)\n')
+            spec=bench.UNIVERSAL_ADAPTER_SPEC["less"]; argv=[sys.executable,str(script)]
+            adapter={"name":"less","status":"IDENTITY_QUALIFIED","path":str(script.resolve()),"sha256":bench.sha(script)[0],"size":bench.sha(script)[1],"arch":bench.platform.machine(),"version":"fake","alias_of":None,"argv":argv,"search_prompt":spec["search_prompt"].hex(),"search_submit":spec["search_submit"].hex(),"quit":spec["quit"].hex(),"expected_topology":spec["expected_topology"],"expected_class":spec["expected_class"],"helper_path":None}
+            with mock.patch.object(bench,"process_group",side_effect=lambda _:(True,[{"command":" ".join(argv),"pid":1}],None)), \
+                 mock.patch.object(bench.Session,"_ps",lambda self:{"verified":True,"argv":argv}):
+                record=bench._universal_adapter_smoke(adapter,corpus,root)
+            self.assertEqual(record["status"],"INCONCLUSIVE")
+            self.assertEqual([a.get("name") for a in json.loads(Path(record["records"]["actions"]["path"]).read_text())],["quit"],"only quit should be sent when startup never matched")
+            bench._validate_universal_smoke({"corpus":str(corpus),"records":{"less":record}},{"less":adapter},{"path":str(root)})
+
+    def test_real_smoke_actions_bind_to_their_trace_events(self):
+        """Run the real smoke path and check every action pairs with its event.
+
+        The strict smoke fixture hand-builds actions and trace events, so it
+        never exercised _universal_adapter_smoke's own quit write -- which
+        omitted the event name and the action write time, and could not be
+        paired by the validator. Only a real participant reaches that code.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d); corpus=root/"smoke.txt"; corpus.write_bytes(b"UBENCH_HEAD_RECORD\n"+b"DATA\n"*20+b"UBENCH_TARGET_RECORD UBENCH_NEEDLE\n"); os.chmod(corpus,0o444)
+            # Echoes every byte, so each write_endpoint phase actually matches.
+            # fake_universal_adapter.py waits for a whole line and so never
+            # reaches them, which makes it useless for this check.
+            script=root/"echo_adapter.py"; script.write_text(textwrap.dedent('''
+                import os
+                os.write(1, b"\\033[6n\\033[c")
+                os.write(1, b"UBENCH_HEAD_RECORD\\n")
+                while True:
+                    try: c = os.read(0, 1)
+                    except OSError: break
+                    if not c: break
+                    if c == b"q": os._exit(0)
+                    if c == b"\\r": os.write(1, b"\\r\\nUBENCH_TARGET_RECORD UBENCH_NEEDLE\\n")
+                    else: os.write(1, c)
+            ''').strip())
+            spec=bench.UNIVERSAL_ADAPTER_SPEC["less"]; argv=[sys.executable,str(script)]
+            adapter={"name":"less","status":"IDENTITY_QUALIFIED","path":str(script.resolve()),"sha256":bench.sha(script)[0],"size":bench.sha(script)[1],"arch":bench.platform.machine(),"version":"fake","alias_of":None,"argv":argv,"search_prompt":spec["search_prompt"].hex(),"search_submit":spec["search_submit"].hex(),"quit":spec["quit"].hex(),"expected_topology":spec["expected_topology"],"expected_class":spec["expected_class"],"helper_path":None}
+            # Identity compares ps output to argv, which never matches a script.
+            with mock.patch.object(bench,"process_group",side_effect=lambda _:(True,[{"command":" ".join(argv),"pid":1}],None)), \
+                 mock.patch.object(bench.Session,"_ps",lambda self:{"verified":True,"argv":argv}):
+                record=bench._universal_adapter_smoke(adapter,corpus,root)
+            actions=json.loads(Path(record["records"]["actions"]["path"]).read_text())
+            trace=json.loads(Path(record["records"]["trace"]["path"]).read_text())
+            events=[e for e in trace if e.get("channel")=="pty_input" and e.get("action") is True]
+            self.assertEqual(len(actions),len(events),"every recorded action needs exactly one action trace event")
+            self.assertIn("quit",[a.get("name") for a in actions],"probe is vacuous unless the quit path ran")
+            self.assertIn("submit",[a.get("name") for a in actions],"probe is vacuous unless the write_endpoint phases ran")
+            for action,event in zip(actions,events):
+                self.assertEqual(event.get("name"),action.get("name"),f"unnamed trace event for {action.get('name')}")
+                self.assertEqual(event.get("data"),action.get("bytes"))
+                self.assertEqual(event.get("at"),action.get("write"),f"write time not bound for {action.get('name')}")
+            # A phase reached live must persist as matched. until() and
+            # write_endpoint() name the ordinal differently, and reading only
+            # until()'s key recorded every later phase as missing.
+            phase_map=json.loads(Path(record["records"]["phase_snapshots"]["path"]).read_text())
+            persisted={n:json.loads(Path(v["path"]).read_text()) for n,v in phase_map.items()}
+            # prompt and typed_needle are the write_endpoint phases this
+            # participant reliably reaches; reaching submit at all proves they
+            # matched live, since a failed phase stops the sequence.
+            for phase in ("prompt","typed_needle"):
+                self.assertTrue(persisted[phase].get("matched"),f"{phase} was reached live but persisted as unmatched")
+                self.assertIsInstance(persisted[phase].get("output_event_ordinal"),int,f"{phase} persisted without its output ordinal")
+
     def _fresh_universal_run(self, root, session_cls):
         root=Path(root); corpus=root/"tiny"; corpus.write_bytes(b"UBENCH_HEAD_RECORD\nUBENCH_TARGET_RECORD UBENCH_NEEDLE\n"); (root/"teddy-highlight").write_bytes(b"helper")
         adapters=[]
@@ -552,7 +659,73 @@ class Phase1Tests(unittest.TestCase):
         for item in schedule:
             a=next(x for x in adapters if x["name"]==item["adapter"]); value=attempt(a,item["operation"],item["block"],item["rep"],item["warmup"],item["index"]); operations[a["name"]][item["operation"]]["warmup_attempts" if item["warmup"] else "attempts"].append(value)
         for values in (v for ops in operations.values() for v in ops.values()): values.update(bench.universal_metric(values["attempts"]))
-        return {"schema":bench.UNIVERSAL_SCHEMA,"phase":"universal-comparison","execution_state":"completed","artifact_root":{"path":str(root)},"geometry":[200,50],"warmups":3,"blocks":2,"repetitions_per_block":16,"corpus":{"path":corpus,"size":1<<30,"record_bytes":64,"records":1<<24,"sha256":"b"*64,"head_marker":"UBENCH_HEAD_RECORD","needle":"UBENCH_NEEDLE","target_marker":"UBENCH_TARGET_RECORD","tail_marker":"UBENCH_TAIL_RECORD","head_offset":0,"target_offset":512<<20,"needle_offset":512<<20+len("UBENCH_TARGET_RECORD "),"tail_offset":(1<<30)-64,"stream_marker":"64-byte-LF-records-v1","read_only_mode":"0o444"},"adapters":adapters,"adapter_smoke":self._strict_smoke(root,adapters),"operations":operations,"schedule":schedule,"contract_only":False}
+        return {"schema":bench.UNIVERSAL_SCHEMA,"phase":"universal-comparison","execution_state":"completed","artifact_root":{"path":str(root)},"geometry":[200,50],"warmups":3,"blocks":2,"repetitions_per_block":16,"corpus":{"path":corpus,"size":1<<30,"record_bytes":64,"records":1<<24,"sha256":"b"*64,"head_marker":"UBENCH_HEAD_RECORD","needle":"UBENCH_NEEDLE","target_marker":"UBENCH_TARGET_RECORD","tail_marker":"UBENCH_TAIL_RECORD","head_offset":0,"target_offset":512<<20,"needle_offset":(512<<20)+len("UBENCH_TARGET_RECORD "),"tail_offset":(1<<30)-64,"stream_marker":"64-byte-LF-records-v1","read_only_mode":"0o444"},"adapters":adapters,"adapter_smoke":self._strict_smoke(root,adapters),"operations":operations,"schedule":schedule,"contract_only":False}
+
+    def test_universal_corpus_offsets_agree_across_producers(self):
+        """Corpus offsets must match wherever they are computed.
+
+        Every strict-fixture test mocks validate_universal_corpus, so a wrong
+        needle_offset in the executor's own metadata survived the whole suite
+        and only failed on a real 1 GiB run. `<<` binds looser than `+`, so
+        512<<20+21 is 512<<41. This asserts the arithmetic without generating
+        a gigabyte.
+        """
+        target=(512<<20); needle=target+len("UBENCH_TARGET_RECORD ")
+        self.assertEqual(needle,536870933)
+        self.assertNotEqual(needle,512<<20+len("UBENCH_TARGET_RECORD "))
+        src=Path(bench.__file__).read_text()
+        self.assertNotIn('"needle_offset":512<<20+',src,"unparenthesised needle_offset shift reintroduced")
+        # The executor must actually adopt the metadata it is handed, not just
+        # own a corrected copy of the same arithmetic.
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d); corpus=root/"tiny"; corpus.write_bytes(b"UBENCH_HEAD_RECORD\nUBENCH_TARGET_RECORD UBENCH_NEEDLE\n"); (root/"teddy-highlight").write_bytes(b"helper")
+            adapters=[]
+            for name in bench.UNIVERSAL_ADAPTER_ORDER:
+                p=root/name; p.write_bytes(name.encode()); spec=bench.UNIVERSAL_ADAPTER_SPEC[name]
+                adapters.append({"name":name,"status":"IDENTITY_QUALIFIED","path":str(p),"sha256":bench.sha(p)[0],"size":bench.sha(p)[1],"arch":"arm64","version":"v","alias_of":None,"argv":bench.universal_adapter_argv(name,p,corpus),"search_prompt":spec["search_prompt"].hex(),"search_submit":spec["search_submit"].hex(),"quit":spec["quit"].hex(),"expected_topology":spec["expected_topology"],"expected_class":spec["expected_class"],"helper_path":str(root/"teddy-highlight") if name=="teddy-shipped" else None})
+            # No adapter passes smoke, so no session is ever launched.
+            smoke={"corpus":str(corpus),"records":{a["name"]:{"status":"INCONCLUSIVE","reason":"none eligible","attempts":0} for a in adapters}}
+            supplied={"path":str(corpus),"size":123,"sha256":"c"*64,"record_bytes":64,"records":7,"head_marker":"UBENCH_HEAD_RECORD","needle":"UBENCH_NEEDLE","target_marker":"UBENCH_TARGET_RECORD","tail_marker":"UBENCH_TAIL_RECORD","head_offset":0,"target_offset":11,"needle_offset":22,"tail_offset":33,"stream_marker":"sentinel-not-recomputable","read_only_mode":"0o444"}
+            result=bench.execute_universal_schedule(adapters,str(corpus),root/"artifacts",smoke=smoke,corpus_meta=supplied)
+            self.assertEqual(result["corpus"],supplied,"executor recomputed corpus metadata instead of using the supplied metadata")
+
+    def test_attempt_validates_when_the_app_leaves_the_alternate_screen(self):
+        """The endpoint marker need not survive into the post-quit screen.
+
+        Every full-screen editor emits `?1049l` on exit, so full_screen is
+        blank. The fixtures happen to make the final screen equal the endpoint
+        screen, which hid this: the real 1 GiB run could not validate a single
+        attempt. Reproduce the real shape -- marker at the endpoint, blank
+        final screen -- and require acceptance.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            result=self._strict_universal_fixture(d)
+            adapter=next(x for x in result["adapters"] if x["name"]=="teddy-shipped")
+            a=json.loads(json.dumps(result["operations"]["teddy-shipped"]["startup"]["attempts"][0]))
+            args=("startup","b"*64,adapter,result["artifact_root"],result["corpus"]["path"])
+            with mock.patch.object(bench,"validate_universal_corpus",return_value=True):
+                self.assertTrue(bench.validate_universal_attempt(a,*args))
+                trace=json.loads(Path(a["trace"]["path"]).read_text())
+                # Enter the alternate buffer by prefixing the first output
+                # chunk rather than inserting an event: on an empty screen it
+                # is visually transparent, so every recorded phase row and
+                # output ordinal stays exactly as the fixture built it.
+                for e in trace:
+                    if e["channel"] in ("pty_output","pty_output_raw") and e["at"]==min(x["at"] for x in trace if x["channel"]=="pty_output"):
+                        e["data"]=b"\x1b[?1049h".hex()+e["data"]
+                exit_alt=b"\x1b[?1049l".hex(); at=max(e["at"] for e in trace)+1.0
+                trace += [{"channel":"pty_output_raw","at":at,"data":exit_alt},{"channel":"pty_output","at":at,"data":exit_alt}]
+                replay=bench.Screen(200,50)
+                for e in trace:
+                    if e["channel"]=="pty_output": replay.feed(bytes.fromhex(e["data"]))
+                final=replay.text()
+                self.assertEqual(sum(1 for r in final if r.strip()),0,"leaving the alternate buffer should blank the screen")
+                self.assertIn("UBENCH_HEAD_RECORD","\n".join(a["endpoint_snapshot"]),"endpoint must still carry the marker")
+                for key,data in (("trace",json.dumps(trace).encode()),("full_screen",("\n".join(final)+"\n").encode())):
+                    p=Path(a[key]["path"]); p.write_bytes(data); a[key]["sha256"],a[key]["size"]=bench.sha(p)
+                raw=Path(a["raw_attempt"]["path"]); raw.write_text(json.dumps(bench._universal_attempt_projection(a),sort_keys=True)+"\n")
+                a["raw_attempt"]["sha256"],a["raw_attempt"]["size"]=bench.sha(raw)
+                self.assertTrue(bench.validate_universal_attempt(a,*args),"attempt rejected because its post-quit screen is blank")
 
     def _probe_attempt(self, attempt, root, label, mutate):
         """Deep-copy an attempt, mutate it, and re-materialize its raw artifact.
@@ -614,6 +787,12 @@ class Phase1Tests(unittest.TestCase):
                     t=a["timestamps"]; t["submit_ms"]-=500.0
                     t["elapsed_ms"]=t["endpoint_ms"]-t["submit_ms"]; a["elapsed_ms"]=t["elapsed_ms"]
                 self.assertFalse(bench.validate_universal_attempt(self._probe_attempt(search,root,"submit",move_submit),*search_args),"submit_ms detached from its action write accepted")
+
+                # 1d. Session.record() spells this pty_output_capped while the
+                #     fixtures say output_capped; both must be honoured, or
+                #     every real attempt reads as unclean.
+                def production_capped(a): a["process"]["pty_output_capped"]=a["process"].pop("output_capped")
+                self.assertTrue(bench.validate_universal_attempt(self._probe_attempt(attempt,root,"capped",production_capped),*args),"production pty_output_capped spelling rejected")
 
                 # 2. Stripped lifecycle fields must not read as a clean exit.
                 stripped=("drain_deadline","cleanup_error","pgid_after","descendants_left","timed_out","output_capped","stderr_capped","unsupported")

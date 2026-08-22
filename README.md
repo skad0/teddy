@@ -101,11 +101,26 @@ shared caveats.
 
 ### Cross-editor comparison
 
-`python3 bench/bench.py compare --allow-large` builds a separate universal
-comparison against nvim, vim, hx, kak, and less. The checked-in result
-([`docs/bench_comparison.md`](docs/bench_comparison.md)) is a **contract-only
-scaffold**: no participant attempts have been executed, so every row is
-`INCONCLUSIVE` and it is not a measurement report.
+`python3 bench/bench.py compare --allow-large --execute` runs a separate
+universal comparison against nvim, vim, hx, kak, and less on a deterministic
+1 GiB corpus. Results are in
+[`docs/bench_comparison.md`](docs/bench_comparison.md):
+
+| Adapter | Operation | Reps | p50 (ms) | p95 (ms) | Status |
+|---|---|---:|---:|---:|---|
+| teddy-shipped | startup | 32 | 5.03 | 6.62 | **MEASURED** |
+| teddy-shipped | search | 32 | 304.72 | 315.60 | **MEASURED** |
+| nvim, vim, hx, kak | both | 0 | — | — | INCONCLUSIVE |
+| less | both | 0 | — | — | INCONCLUSIVE |
+
+Startup is pre-fork to the causal head event; search is submit to the causal
+target event 512 MiB into the file. **Only teddy produced measurements.** The
+comparators are ineligible, not slower: eligibility requires a clean smoke,
+and every one of them drives terminal features this harness's screen model
+does not implement (mouse tracking, bracketed paste, cursor shape, DECRQM), so
+their sessions do not end cleanly. `less` never matched the head marker at
+all. Each exclusion is recorded with its reason rather than dropped, and **no
+rankings are produced** — these numbers do not say teddy is faster than vim.
 
 Execution is gated on an adversarial oracle,
 `test_oracle_mutation_probes_are_rejected`, which mutates a valid result and

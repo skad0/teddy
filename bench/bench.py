@@ -420,7 +420,7 @@ def stage(root):
         d=root/profile; d.mkdir(); files={}
         for n in names:
             dst=d/n; shutil.copy2(binaries[n],dst); h,z=sha(dst)
-            try: version=subprocess.check_output([str(dst),"--version"],text=True,stderr=subprocess.STDOUT,timeout=2).strip()
+            try: version=subprocess.check_output([str(dst),"--version"],text=True,stderr=subprocess.STDOUT,timeout=30).strip()
             except Exception: version="UNAVAILABLE"
             files[n]={"sha256":h,"size":z,"version":version,"identity_verified":dst.is_file() and h==sha(binaries[n])[0]}
         result[profile]={"exact_files":sorted(p.name for p in d.iterdir()),"files":files,"identity_source":{n:{"sha256":sha(binaries[n])[0],"size":sha(binaries[n])[1],"arch":platform.machine()} for n in names},"helper_probe":files.get("teddy-highlight")}
@@ -756,7 +756,12 @@ def _phase2_profiles(root,built):
     for name,names in (("bare",("teddy",)),("shipped",("teddy","teddy-highlight"))):
         d=Path(root)/name; d.mkdir(parents=True,exist_ok=True); files={}
         for n in names:
-            src=Path(built)/n; dst=d/n; shutil.copy2(src,dst); h,z=sha(dst); vp=subprocess.run([str(dst),"--version"],capture_output=True,text=True,timeout=2); files[n]={"sha256":h,"size":z,"version":vp.stdout.strip(),"version_capture":{"stdout":vp.stdout,"stderr":vp.stderr,"exit":vp.returncode},"arch":platform.machine(),"path":str(dst)}
+            # First execution of a freshly staged binary pays one-time OS
+            # validation (Gatekeeper/XProtect on macOS), which intermittently
+            # exceeded a 2s bound and aborted the whole run.  This is identity
+            # metadata capture, not a measured operation, so the bound is
+            # generous; nothing timed depends on it.
+            src=Path(built)/n; dst=d/n; shutil.copy2(src,dst); h,z=sha(dst); vp=subprocess.run([str(dst),"--version"],capture_output=True,text=True,timeout=30); files[n]={"sha256":h,"size":z,"version":vp.stdout.strip(),"version_capture":{"stdout":vp.stdout,"stderr":vp.stderr,"exit":vp.returncode},"arch":platform.machine(),"path":str(dst)}
         profiles[name]={"root":str(d/"teddy"),"helper":str(d/"teddy-highlight") if name=="shipped" else None,"files":files,"exact_files":sorted(names)}
     return profiles
 
@@ -1305,7 +1310,7 @@ def _universal_materialize_attempt(a, s, root, adapter, phase_snapshots):
     raw=d/(f"{a['operation']}-{a['schedule_index']}-raw.json"); raw.write_text(json.dumps(_universal_attempt_projection(a),sort_keys=True)+"\n"); h,z=sha(raw); a["raw_attempt"]={"path":str(raw),"sha256":h,"size":z}
     return a
 
-def execute_universal_schedule(adapters, corpus, artifact_root, session_cls=Session, timeout=8, smoke=None):
+def execute_universal_schedule(adapters, corpus, artifact_root, session_cls=Session, timeout=8, smoke=None, corpus_meta=None):
     """Execute a complete eligible matrix against real PTY Sessions.
 
     This is intentionally separate from ``compare``: callers must explicitly
@@ -1366,7 +1371,12 @@ def execute_universal_schedule(adapters, corpus, artifact_root, session_cls=Sess
     for ops in operations.values():
         for value in ops.values(): value.update(universal_metric(value["attempts"]))
     size=Path(corpus).stat().st_size
-    corpus_meta={"path":corpus,"size":size,"sha256":digest,"record_bytes":64,"records":size//64,"head_marker":"UBENCH_HEAD_RECORD","needle":"UBENCH_NEEDLE","target_marker":"UBENCH_TARGET_RECORD","tail_marker":"UBENCH_TAIL_RECORD","head_offset":0,"target_offset":512<<20,"needle_offset":512<<20+len("UBENCH_TARGET_RECORD "),"tail_offset":max(0,size-64),"stream_marker":"64-byte-LF-records-v1","read_only_mode":oct(Path(corpus).stat().st_mode & 0o777)}
+    # Prefer the metadata generate_universal_corpus() already returned: two
+    # independent computations of the same offsets is how the needle_offset
+    # precedence bug got in (`<<` binds looser than `+`, so 512<<20+21 is
+    # 512<<41).  The fallback keeps the small-corpus test callers working.
+    if corpus_meta is None:
+        corpus_meta={"path":corpus,"size":size,"sha256":digest,"record_bytes":64,"records":size//64,"head_marker":"UBENCH_HEAD_RECORD","needle":"UBENCH_NEEDLE","target_marker":"UBENCH_TARGET_RECORD","tail_marker":"UBENCH_TAIL_RECORD","head_offset":0,"target_offset":512<<20,"needle_offset":(512<<20)+len("UBENCH_TARGET_RECORD "),"tail_offset":max(0,size-64),"stream_marker":"64-byte-LF-records-v1","read_only_mode":oct(Path(corpus).stat().st_mode & 0o777)}
     return {"schema":UNIVERSAL_SCHEMA,"phase":"universal-comparison","command":"python3 bench/bench.py compare --allow-large --execute","execution_state":"completed","contract_only":False,"artifact_root":{"path":str(root)},"geometry":[200,50],"warmups":3,"blocks":2,"repetitions_per_block":16,"corpus":corpus_meta,"adapters":adapters,"adapter_smoke":smoke_object,"operations":operations,"schedule":schedule,"limitations":["Completed executor evidence is non-claim comparison evidence; no rankings are produced."],"c1_c5_isolation":"Universal comparison is non-claim evidence and cannot modify Teddy C1-C5."}
 
 def _universal_adapter_ok(a,corpus):
@@ -1391,11 +1401,24 @@ def _universal_adapter_ok(a,corpus):
     if name=="vis": return a["status"]=="REJECTED_UNSUPPORTED" and a["path"]=="/usr/bin/vis" and a["alias_of"] is None
     return a["status"]=="IDENTITY_QUALIFIED" and a["alias_of"] is None
 
+SMOKE_LIFECYCLE_FIELDS=("exit","signal","reaped","pty_eof","stderr_eof","drain_complete","exec_failed","drain_deadline","cleanup_error","pgid_after","descendants_left","timed_out","stderr_capped","unsupported")
+
+def _smoke_lifecycle_complete(process):
+    """Every lifecycle field must be recorded, whatever its value.
+
+    Presence and cleanliness are separate questions: an INCONCLUSIVE record is
+    allowed to be unclean, but it is never allowed to be silent.  Folding the
+    two together let a stripped record pass as long as it did not claim PASS.
+    """
+    if not isinstance(process,dict): return False
+    if not all(k in process for k in SMOKE_LIFECYCLE_FIELDS): return False
+    return "output_capped" in process or "pty_output_capped" in process
+
 def _smoke_lifecycle_ok(process):
     # Smoke PASS gates measurement eligibility, so it requires the same
     # presence discipline as attempt lifecycle: a stripped record must not
     # read as a clean exit.
-    if not isinstance(process,dict): return False
+    if not _smoke_lifecycle_complete(process): return False
     must_be_clean=("drain_deadline","cleanup_error","pgid_after","descendants_left","timed_out","stderr_capped","unsupported")
     capped="output_capped" if "output_capped" in process else "pty_output_capped"
     return (process.get("exit")==0 and ("signal" in process and process["signal"] is None) and
@@ -1407,7 +1430,14 @@ def _validate_smoke_attempt(record,trace,actions,identity,topology,phase_map,ada
     """Validate attempted smoke from retained artifacts, including failures."""
     if not validate_trace_provenance(trace,record.get("harness_traffic",[])): raise ValueError("smoke trace provenance mismatch")
     process=record.get("process",{}); life=_smoke_lifecycle_ok(process)
-    if not life: raise ValueError("smoke lifecycle mismatch")
+    # Unclean is allowed for INCONCLUSIVE; incomplete never is.
+    if not _smoke_lifecycle_complete(process): raise ValueError("smoke lifecycle evidence incomplete")
+    # An unclean lifecycle is what INCONCLUSIVE *means*; it is consistent
+    # evidence, not a contradiction.  Real editors emit sequences this screen
+    # model does not implement (mouse, bracketed paste, cursor shape, DECRQM),
+    # so they land here and must be recorded as ineligible rather than
+    # aborting the whole comparison.  Only a PASS claim requires clean.
+    if record.get("status")=="PASS" and not life: raise ValueError("smoke lifecycle mismatch")
     names=("startup_head","prompt","typed_needle","target"); expected_input=("prompt","typed_needle","submit","quit")
     if set(phase_map)!=set(names): raise ValueError("smoke phase matrix mismatch")
     outputs=[(i,e) for i,e in enumerate(trace) if e.get("channel")=="pty_output"]; input_events=[(i,e) for i,e in enumerate(trace) if e.get("channel")=="pty_input" and e.get("action") is True]
@@ -1443,13 +1473,22 @@ def _validate_smoke_attempt(record,trace,actions,identity,topology,phase_map,ada
             if any(not isinstance(x,int) for x in points) or points!=sorted(points) or submit is None or not points[-1]>submit.get("trace_index",-1): raise ValueError("smoke phase order mismatch")
     missing=next((i for i,n in enumerate(names) if payloads[n].get("matched") is False),None)
     if missing is None:
-        if record.get("status")!="PASS" or [x.get("name") for x in actions]!=list(expected_input): raise ValueError("smoke status/action mismatch")
+        # Every phase matched, so the full action sequence must be present.
+        # The status still depends on the lifecycle: a participant that walked
+        # the whole sequence but did not exit cleanly is INCONCLUSIVE.
+        if record.get("status")!=("PASS" if life else "INCONCLUSIVE") or [x.get("name") for x in actions]!=list(expected_input): raise ValueError("smoke status/action mismatch")
     else:
         if record.get("status")!="INCONCLUSIVE" or [x.get("name") for x in actions]!=list(expected_input[:missing]+("quit",)): raise ValueError("smoke inconclusive prefix mismatch")
         first_name=names[missing]; input_name={"prompt":"prompt","typed_needle":"typed_needle","target":"submit"}.get(first_name)
-        phase_input=next((x for x in actions if x.get("name")==input_name),None)
         first_payload=payloads[first_name]
-        if phase_input is None or first_payload.get("associated_input_trace_event_index")!=phase_input.get("trace_index") or first_payload.get("input_write_time")!=phase_input.get("write"): raise ValueError("smoke missing phase association mismatch")
+        if input_name is None:
+            # startup_head is reached before anything is written, so it has no
+            # input action to bind to.  Requiring one made a participant that
+            # never emits the head marker unvalidatable.
+            if any(first_payload.get(k) is not None for k in ("associated_input_trace_event_index","input_write_time")): raise ValueError("smoke missing phase association mismatch")
+        else:
+            phase_input=next((x for x in actions if x.get("name")==input_name),None)
+            if phase_input is None or first_payload.get("associated_input_trace_event_index")!=phase_input.get("trace_index") or first_payload.get("input_write_time")!=phase_input.get("write"): raise ValueError("smoke missing phase association mismatch")
         for i in range(missing,len(names)):
             q=payloads[names[i]]
             if q.get("matched") is not False: raise ValueError("smoke unattempted phase mismatch")
@@ -1657,8 +1696,13 @@ def validate_universal_attempt(a,operation,digest,adapter,artifact_root,corpus_p
         if derived!=a["topology_evidence"].get("observed_argvs"): return False
     # Absence is not evidence of cleanliness: each of these must be *present*
     # and falsy, or a stripped process record would read as a clean lifecycle.
-    p=a["process"]; must_be_clean=("drain_deadline","cleanup_error","pgid_after","descendants_left","timed_out","output_capped","stderr_capped","unsupported")
-    life=p.get("exit")==0 and ("signal" in p and p["signal"] is None) and p.get("reaped") is True and p.get("pty_eof") is True and p.get("stderr_eof") is True and p.get("drain_complete") is True and all(k in p and not p[k] for k in must_be_clean) and p.get("exec_failed") is False
+    # Session.record() names this pty_output_capped; the test fixtures say
+    # output_capped.  Requiring presence turned that divergence into "every
+    # real attempt is unclean", so resolve the same way _smoke_lifecycle_ok
+    # does rather than hard-coding one spelling.
+    p=a["process"]; must_be_clean=("drain_deadline","cleanup_error","pgid_after","descendants_left","timed_out","stderr_capped","unsupported")
+    capped="output_capped" if "output_capped" in p else "pty_output_capped"
+    life=p.get("exit")==0 and ("signal" in p and p["signal"] is None) and p.get("reaped") is True and p.get("pty_eof") is True and p.get("stderr_eof") is True and p.get("drain_complete") is True and all(k in p and not p[k] for k in must_be_clean) and capped in p and not p[capped] and p.get("exec_failed") is False
     t=a["timestamps"]
     fields=("pre_fork_ms","endpoint_ms","quiet_complete_ms","elapsed_ms") if operation=="startup" else ("pre_fork_ms","prompt_start_ms","prompt_echo_ms","submit_ms","endpoint_ms","quiet_complete_ms","elapsed_ms")
     # Missing endpoints are represented by null timing values.  They are
@@ -1705,8 +1749,15 @@ def validate_universal_attempt(a,operation,digest,adapter,artifact_root,corpus_p
             except ValueError: return False
     if replay.text()!=screen: return False
     causal=ordering and timing_available and t["elapsed_ms"]==elapsed and a["endpoint"]==event and a["endpoint_snapshot"] and event in "\n".join(a["endpoint_snapshot"])
-    if operation=="startup": causal=causal and event in "\n".join(screen) and "UBENCH_TARGET_RECORD" not in "\n".join(screen)
-    else: causal=causal and a["prompt_echo"] is True and event not in "\n".join(a["prompt_screen"]) and event not in "\n".join(a["typed_needle"]) and "UBENCH_TARGET_RECORD" in "\n".join(screen)
+    # Assert marker presence/absence against the endpoint snapshot, not the
+    # final screen.  `screen` is the replay of the *entire* trace, i.e. the
+    # state after quit -- and a full-screen editor leaves the alternate buffer
+    # on exit (\x1b[?1049l), so it is blank.  Requiring the endpoint marker to
+    # survive there could never hold.  endpoint_snapshot is trace-derived and
+    # replay-verified above, so it carries the same evidentiary weight.
+    endpoint_rows="\n".join(a["endpoint_snapshot"])
+    if operation=="startup": causal=causal and "UBENCH_TARGET_RECORD" not in endpoint_rows
+    else: causal=causal and a["prompt_echo"] is True and event not in "\n".join(a["prompt_screen"]) and event not in "\n".join(a["typed_needle"])
     snapshots=a.get("phase_snapshots")
     executor_evidence="phase_snapshots" in a
     if executor_evidence and not (isinstance(snapshots,dict) and set(snapshots)=={"path","sha256","size"}): return False
@@ -1866,12 +1917,24 @@ def universal_report_markdown(r):
     contract_only=r.get("execution_state")=="not_started"
     opening="**Contract-only scaffold.** No participant attempts were executed. All operations are therefore `INCONCLUSIVE`; this is not a measurement report. `compare --allow-large --execute` remains Oracle-gated on `test_oracle_mutation_probes_are_rejected`." if contract_only else "**Completed execution.** Results below are evidence-bound observations only; no rankings or C1–C5 claims are produced."
     lines=["# S9 universal cross-editor comparison","","Separate from Teddy C1–C5: universal observations never modify or contribute to those claims.","",opening+" Phase 2 eligibility requires both `IDENTITY_QUALIFIED` identity and `PASS` adapter smoke; smoke-ineligible adapters remain explicit `INCONCLUSIVE` rows.","","## Metrics","","| Adapter | Operation | Repetitions | p50 (ms) | p95 (ms) | Status | Caveat |","|---|---|---:|---:|---:|---|---|"]
+    smoke_records=(r.get("adapter_smoke") or {}).get("records",{})
     for n in UNIVERSAL_ADAPTER_ORDER:
         v=r.get("operations",{}).get(n)
-        if not v: continue
+        caveat="Narrow shared read-only startup/search operation; separate from C1–C5." if n=="teddy-shipped" else ("less is a demand-driven pager, not an editor; narrow operation only, separate from C1–C5." if n=="less" else ("Kakoune uses a server/UI process model; narrow operation only, separate from C1–C5." if n=="kak" else "Narrow shared read-only startup/search operation; runtime/config differences remain, separate from C1–C5."))
+        if not v:
+            # A participant that was attempted and excluded must stay visible.
+            # Dropping these rows made the report claim measurements for the
+            # only eligible adapter without disclosing who else ran and why
+            # they were ineligible.
+            record=smoke_records.get(n)
+            if not record: continue
+            reason=str(record.get("reason","")).strip() or "not eligible"
+            status=record.get("status")
+            for op in ("search","startup"):
+                lines.append(f"| {n} | {op} | 0 | — | — | {'INCONCLUSIVE' if status not in ('ALIAS_OF','REJECTED_UNSUPPORTED') else status} | Smoke ineligible ({reason}); {caveat} |")
+            continue
         for op in ("search","startup"):
             d=v[op]
-            caveat="Narrow shared read-only startup/search operation; separate from C1–C5." if n=="teddy-shipped" else ("less is a demand-driven pager, not an editor; narrow operation only, separate from C1–C5." if n=="less" else ("Kakoune uses a server/UI process model; narrow operation only, separate from C1–C5." if n=="kak" else "Narrow shared read-only startup/search operation; runtime/config differences remain, separate from C1–C5."))
             lines.append(f"| {n} | {op} | {d.get('repetitions',0)} | {d.get('p50_ms') if d.get('p50_ms') is not None else '—'} | {d.get('p95_ms') if d.get('p95_ms') is not None else '—'} | {d.get('status')} | {caveat} |")
     lines += ["","## Contract",f"- Schema: `{r['schema']}`; geometry `{r['geometry'][0]}x{r['geometry'][1]}`; warmups `{r['warmups']}`; two rotated blocks of 16 measured repetitions (warmups excluded).","- Each eligible adapter/operation retains three warmups plus a contiguous global schedule for the two rotated 16-repetition blocks; warmups are excluded from metrics. Startup uses pre-fork-to-head timing; search uses submit-to-target timing.","- Only 32 valid causal attempts expose headline p50/p95; no rankings are produced.","- PTY metrics describe application emission and terminal-model events, not physical rendering.","- Phase 1 runs a bounded per-adapter small-fixture smoke for eligibility; smoke statuses are diagnostic and do not create participant metrics.","- Teddy uses the documented positional invocation only: `[teddy, corpus]`; the corpus is read-only on disk and manager mode is disabled. Its shipped topology is the staged Teddy root plus the exact sibling `teddy-highlight` helper. `vi` must be an exact vim alias and `/usr/bin/vis` is rejected.","- Phase 2 must validate raw-attempt, timestamped trace replay, artifact, causal timing, terminal-traffic, corpus-integrity, topology, and cleanup evidence before an operation becomes `MEASURED`."]
     if len(lines)>250: raise ValueError("universal report too long")
@@ -1907,7 +1970,13 @@ def _universal_adapter_smoke(adapter,corpus,root):
             phases["target"]=endpoint
             if endpoint.get("matched") is not True: reason="target endpoint failed"
         if not any(x.get("name")=="quit" for x in s.actions):
-            os.write(s.master,bytes.fromhex(adapter["quit"])); s.trace_events.append({"channel":"pty_input","at":time.monotonic()-s.t0,"data":adapter["quit"],"action":True}); s.actions.append({"name":"quit","bytes":adapter["quit"],"trace_index":len(s.trace_events)-1})
+            # Record exactly what send_action() records: the validator binds
+            # each action to its trace event by name and write time, so an
+            # unnamed event or a write-less action cannot be paired.  This
+            # path is hand-rolled (rather than send_action) because quit must
+            # be sent even when the terminal never goes quiet.
+            os.write(s.master,bytes.fromhex(adapter["quit"])); at=time.monotonic()-s.t0
+            s.trace_events.append({"channel":"pty_input","at":at,"data":adapter["quit"],"action":True,"name":"quit"}); s.actions.append({"name":"quit","bytes":adapter["quit"],"trace_index":len(s.trace_events)-1,"write":at})
         deadline=time.monotonic()+1
         while s.pid>0 and time.monotonic()<deadline: s._read(.01); s.poll()
         clean=s.close(); process=s.record(); identity_after=_universal_identity(adapter["path"],adapter["argv"],adapter.get("version","unknown")); helper_after=_universal_helpers(adapter); valid=not reason and all(isinstance(phases.get(name),dict) and phases[name].get("matched") is True for name in ("startup_head","prompt","typed_needle","target")) and clean and process.get("exit")==0 and process.get("signal") is None and process.get("reaped") and process.get("pty_eof") and process.get("stderr_eof") and process.get("drain_complete") and not process.get("pgid_after") and not process.get("descendants_left") and not process.get("timed_out") and not process.get("unsupported")
@@ -1916,10 +1985,19 @@ def _universal_adapter_smoke(adapter,corpus,root):
             p=smoke_dir/name; p.write_bytes(data); h,z=sha(p); return {"path":str(p),"sha256":h,"size":z}
         output_trace=[(i,e) for i,e in enumerate(s.trace_events) if e.get("channel")=="pty_output"]
         def smoke_phase(name,ep):
-            if not isinstance(ep,dict) or ep.get("matched") is not True or not isinstance(ep.get("event_index"),int):
+            # until() names this key event_index; write_endpoint() names it
+            # output_event_index/endpoint_event_index.  Reading only the former
+            # recorded every write_endpoint phase as missing even when it had
+            # matched, so the persisted evidence contradicted the live run.
+            # phase_payload() resolves it the same way.
+            ordinal=None
+            if isinstance(ep,dict):
+                ordinal=ep.get("event_index")
+                if not isinstance(ordinal,int): ordinal=ep.get("output_event_index",ep.get("endpoint_event_index"))
+            if not isinstance(ep,dict) or ep.get("matched") is not True or not isinstance(ordinal,int) or not 0<=ordinal<len(output_trace):
                 inp=None if name=="startup_head" else next((x for x in s.actions if x.get("name")=={"prompt":"prompt","typed_needle":"typed_needle","target":"submit"}.get(name)),None)
                 return {"name":name,"phase":name,"matched":False,"missing":True,"rows":[],"output_event_ordinal":None,"trace_event_index":None,"causal_time":None,"associated_input_trace_event_index":None if inp is None else inp.get("trace_index"),"input_write_time":None if inp is None else inp.get("write")}
-            ordinal=ep["event_index"]; full,ev=output_trace[ordinal]
+            full,ev=output_trace[ordinal]
             return {"name":name,"phase":name,"matched":True,"missing":False,"rows":ep.get("snapshot") or [],"output_event_ordinal":ordinal,"trace_event_index":full,"causal_time":ev["at"],"associated_input_trace_event_index":None if name=="startup_head" else ep.get("input_trace_index"),"input_write_time":None if name=="startup_head" else ep.get("input_trace_time")}
         phase_records={name:artifact(name+".json",json.dumps(smoke_phase(name,phases.get(name)),sort_keys=True).encode()) for name in ("startup_head","prompt","typed_needle","target")}
         records={"trace":artifact("trace.json",json.dumps(s.trace_events,sort_keys=True).encode()),"screen":artifact("screen.txt",("\n".join(s.screen.text())+"\n").encode()),"actions":artifact("actions.json",json.dumps(s.actions,sort_keys=True).encode()),"identity":artifact("identity.json",json.dumps({"verified":identity_before.get("verified"),"argv":adapter["argv"],"before":identity_before,"after":identity_after},sort_keys=True).encode()),"topology":artifact("topology.json",json.dumps({"expected_argvs":[adapter["argv"]]+([[adapter["helper_path"]]] if adapter["helper_path"] else []),"observed_argvs":[shlex.split(row.get("command",row.get("args",""))) for row in group_rows],"unexpected":not group_ok,"pgid_before":group_rows,"pgid_before_probe_error":group_error,"descendants":process.get("descendants",[]),"pgid_after":process.get("pgid_after",[])},sort_keys=True).encode()),"phase_snapshots":artifact("phase_snapshots.json",json.dumps(phase_records,sort_keys=True).encode())}
@@ -1946,7 +2024,7 @@ def compare(a):
         y=dict(x); y["argv"]=universal_adapter_argv(x["name"],x["path"],smoke_corpus) if x["status"]=="IDENTITY_QUALIFIED" else x["argv"]; smoke_adapters.append(y)
     smoke={x["name"]:_universal_adapter_smoke(x,smoke_corpus,run) for x in smoke_adapters}; smoke_object={"corpus":str(smoke_corpus),"records":smoke};
     if getattr(a,"execute",False):
-        result=execute_universal_schedule(adapters,corpus,run,smoke=smoke_object)
+        result=execute_universal_schedule(adapters,corpus,run,smoke=smoke_object,corpus_meta=meta)
         validate_universal_result(result); (REPO/"bench/results/comparison.json").write_text(json.dumps(result,indent=2,sort_keys=True)+"\n"); (REPO/"docs/bench_comparison.md").write_text(universal_report_markdown(result)); validate_universal_report(result,(REPO/"docs/bench_comparison.md").read_text()); print(json.dumps(result,indent=2,sort_keys=True)); return
     operations={a["name"]:{op:{"status":"INCONCLUSIVE","repetitions":0,"p50_ms":None,"p95_ms":None,"warmup_attempts":[],"attempts":[]} for op in ("startup","search")} for a in adapters if a["status"]=="IDENTITY_QUALIFIED"}; result={"schema":UNIVERSAL_SCHEMA,"phase":"universal-comparison","command":"python3 bench/bench.py compare --allow-large","contract_only":True,"execution_state":"not_started","schedule":[],"artifact_root":{"path":str(run.relative_to(REPO))},"geometry":[200,50],"warmups":3,"blocks":2,"repetitions_per_block":16,"corpus":meta,"adapters":adapters,"adapter_smoke":smoke_object,"operations":operations,"limitations":["Contract-only scaffold: no participant metric attempts were executed; Phase 2 must execute the declared matrix"],"c1_c5_isolation":"Universal comparison is non-claim evidence and cannot modify Teddy C1-C5."}; validate_universal_result(result); (REPO/"bench/results").mkdir(parents=True,exist_ok=True); (REPO/"bench/results/comparison.json").write_text(json.dumps(result,indent=2,sort_keys=True)+"\n"); (REPO/"docs/bench_comparison.md").write_text(universal_report_markdown(result)); validate_universal_report(result,(REPO/"docs/bench_comparison.md").read_text()); print(json.dumps(result,indent=2,sort_keys=True))
 
