@@ -12,6 +12,7 @@ PHASE2_SCHEMA="teddy-s9-phase2-result-2"
 PHASE2_METHODOLOGY="s9-c1-post-readiness-observer-1"
 PHASE2_HISTORICAL_CONTEXT="The prior canonical Phase 2 C1 result was FAIL and used pre-drain identity/PGID observation; it remains immutable historical context and is not silently overwritten."
 UNIVERSAL_SCHEMA="teddy-s9-universal-comparison-1"
+UNIVERSAL_SUMMARY_SCHEMA="teddy-s9-universal-comparison-summary-1"
 UNIVERSAL_ADAPTER_ORDER=("teddy-shipped","nvim","vim","hx","kak","less","vi","vis")
 UNIVERSAL_MEASURED_REPS=32
 UNIVERSAL_WARMUPS=3
@@ -107,13 +108,34 @@ def _winsize(fd,g):
 def isolated_env(home):
     return {"HOME":str(home),"XDG_CONFIG_HOME":str(home/"config"),"XDG_DATA_HOME":str(home/"data"),"XDG_STATE_HOME":str(home/"state"),"XDG_CACHE_HOME":str(home/"cache"),"TMPDIR":str(home/"tmp"),"TERM":"xterm-256color","LANG":"C.UTF-8","LC_ALL":"C.UTF-8","PATH":os.environ.get("PATH","/usr/bin:/bin")}
 
+# Private modes that configure input reporting or decoration and cannot move
+# the grid, so consuming them as no-ops loses no evidence.  Deliberately an
+# allow-list: ?3 (DECCOLM), ?6 (origin), ?7 (autowrap) and ?69 (margins) all
+# change what gets drawn, so an unrecognised mode stays unsupported rather
+# than being waved through.
+# ?2027 (grapheme clustering) is deliberately absent: it changes cell width
+# and cursor advancement, so it is not neutral.
+NEUTRAL_PRIVATE_MODES=frozenset("1 8 9 12 1000 1001 1002 1003 1004 1005 1006 1007 1015 1016 1034 1035 1036 1037 2004 2026 2031 2048".split())
+# DCS payloads that only query the terminal. Sixel (`q`) and DECDLD (`{`)
+# draw, so an unrecognised DCS is consumed but still recorded as unsupported.
+INERT_DCS_PREFIXES=("+q","+p","$q")
+
 class Screen:
     def __init__(self,cols=200,rows=50):
         self.cols,self.rows=cols,rows; self.x=self.y=0; self.alt=False; self.cursor_visible=True; self.unsupported=[]; self._pending=b""; self._decoder=codecs.getincrementaldecoder("utf-8")("strict")
         self.main=[[' ']*cols for _ in range(rows)]; self.alternate=[[' ']*cols for _ in range(rows)]; self.grid=self.main; self.saved_main=(0,0); self.saved_alt=(0,0)
+        self.top,self.bottom=0,rows-1
+    def _scroll(self):
+        """Scroll the region up one line, discarding the top margin row."""
+        del self.grid[self.top]; self.grid.insert(self.bottom,[' ']*self.cols)
     def _put(self,ch):
         if ch in "\a": return
-        if ch=="\n": self.y=min(self.rows-1,self.y+1); return
+        if ch=="\n":
+            # Only a cursor exactly on the bottom margin scrolls the region;
+            # one below it is outside the region and must just move down.
+            if self.y==self.bottom: self._scroll()
+            else: self.y=min(self.rows-1,self.y+1)
+            return
         if ch=="\r": self.x=0; return
         if ch=="\b": self.x=max(0,self.x-1); return
         if ch=="\t": self.x=min(self.cols-1,self.x+8-self.x%8); return
@@ -134,6 +156,29 @@ class Screen:
                     if self._pending[i+1]==55: self.saved_alt=(self.x,self.y)
                     else: self.x,self.y=self.saved_alt
                     i+=2; continue
+                nxt=self._pending[i+1]
+                if nxt in (0x50,0x5d,0x5e,0x5f):
+                    # DCS/OSC/PM/APC carry a string terminated by ST or BEL.
+                    # They set titles, query termcap, etc. -- none of it reaches
+                    # the grid, but the payload must be consumed so its bytes
+                    # are never mistaken for printable output.
+                    end=-1
+                    for k in range(i+2,len(self._pending)):
+                        if self._pending[k]==0x07: end=k+1; break
+                        if self._pending[k]==27 and k+1<len(self._pending) and self._pending[k+1]==0x5c: end=k+2; break
+                    if end<0: break
+                    if nxt==0x50:
+                        payload=self._pending[i+2:end].decode("ascii","replace")
+                        if not payload.startswith(INERT_DCS_PREFIXES): self.unsupported.append("dcs:"+payload[:16])
+                    i=end; continue
+                if 0x28<=nxt<=0x2b:
+                    # Charset designation. Only ASCII (B) leaves rendering
+                    # unchanged; ESC ( 0 selects DEC Special Graphics and
+                    # remaps subsequent bytes to line-drawing characters.
+                    if i+2>=len(self._pending): break
+                    if self._pending[i+2]!=0x42: self.unsupported.append(self._pending[i:i+3].hex())
+                    i+=3; continue
+                if nxt in (0x3d,0x3e): i+=2; continue  # keypad application/numeric mode
                 self.unsupported.append(self._pending[i:i+2].hex()); i+=2; continue
             if b<32: self._put(chr(b)); i+=1; continue
             try:
@@ -157,12 +202,45 @@ class Screen:
                 self.alt=False; self.grid=self.main
                 if q=="1049": self.x,self.y=self.saved_main
             return
+        # Everything below is content-neutral: the application is configuring
+        # input handling or the terminal's decoration, not drawing. Consuming
+        # them as no-ops is what lets real editors be measured at all; the two
+        # sequences that DO move the grid (ECH, DECSTBM) are implemented, not
+        # waved through.
+        if f in "hl" and private and all(m in NEUTRAL_PRIVATE_MODES for m in q.split(";") if m): return
+        if f=="p" and p.endswith("$"): return                  # DECRQM mode query; reply is the session's job
+        if f=="m": return                                      # SGR, incl. colon sub-params like 4:3m
+        if f=="q" and (not p or p.rstrip().isdigit()): return   # DECSCUSR cursor shape
+        if f in "cn" and (private or p.startswith((">","<")) or not p or p.isdigit()): return  # DA/DSR queries
+        if f=="u" and (private or p.startswith((">","<")) or not p): return  # kitty keyboard protocol
+        if p.startswith((">","<")): return                     # other private-prefix parameter forms
+        if f=="t" and p.split(";")[0] in ("22","23"): return    # XTWINOPS title push/pop
         try: a=[int(x or 1) for x in p.split(';')] if p else [1]
         except ValueError: self.unsupported.append(p+f); return
         n=a[0]
         if f in "ABCD": self.y=max(0,min(self.rows-1,self.y+({'A':-n,'B':n}.get(f,0)))); self.x=max(0,min(self.cols-1,self.x+({'C':n,'D':-n}.get(f,0))))
         elif f in "Hf": self.y=max(0,min(self.rows-1,a[0]-1)); self.x=max(0,min(self.cols-1,(a[1] if len(a)>1 else 1)-1))
-        elif f=="J" and n in (2,3): self.grid[:]=[[' ']*self.cols for _ in self.grid]
+        elif f=="J":
+            mode=0 if not p else n
+            if mode in (2,3): self.grid[:]=[[' ']*self.cols for _ in self.grid]
+            elif mode==0:
+                # Erase from the cursor to the end of the display.
+                self.grid[self.y]=self.grid[self.y][:self.x]+[' ']*(self.cols-self.x)
+                for row in range(self.y+1,self.rows): self.grid[row]=[' ']*self.cols
+            elif mode==1:
+                for row in range(0,self.y): self.grid[row]=[' ']*self.cols
+                self.grid[self.y]=[' ']*min(self.cols,self.x+1)+self.grid[self.y][self.x+1:]
+            else: self.unsupported.append(p+f)
+        elif f=="X":
+            # ECH: erase n characters from the cursor without moving it.
+            end=min(self.cols,self.x+max(1,n)); self.grid[self.y][self.x:end]=[' ']*(end-self.x)
+        elif f=="r":
+            # DECSTBM: set the scrolling region and home the cursor into it.
+            top=max(1,a[0])-1; bottom=(a[1] if len(a)>1 else self.rows)-1
+            if not 0<=top<bottom<self.rows: self.unsupported.append(p+f); return
+            # Origin mode (?6) is never enabled -- it stays unsupported -- so
+            # the cursor homes to the absolute top-left, not the top margin.
+            self.top,self.bottom=top,bottom; self.x=0; self.y=0
         elif f=="K":
             mode=0 if not p else n
             if mode==2: self.grid[self.y]=[' ']*self.cols
@@ -588,8 +666,10 @@ def smoke(a):
 
 def report(a):
     x=json.loads(Path(a.input).read_text())
-    if x.get("schema")==UNIVERSAL_SCHEMA:
-        validate_universal_result(x)
+    if x.get("schema") in (UNIVERSAL_SCHEMA,UNIVERSAL_SUMMARY_SCHEMA):
+        # The published result is a summary, so `report` must accept it.
+        if x.get("schema")==UNIVERSAL_SUMMARY_SCHEMA: validate_universal_summary(x)
+        else: validate_universal_result(x)
         text=universal_report_markdown(x); validate_universal_report(x,text)
         if a.output: Path(a.output).write_text(text)
         else: print(text,end="")
@@ -1401,24 +1481,26 @@ def _universal_adapter_ok(a,corpus):
     if name=="vis": return a["status"]=="REJECTED_UNSUPPORTED" and a["path"]=="/usr/bin/vis" and a["alias_of"] is None
     return a["status"]=="IDENTITY_QUALIFIED" and a["alias_of"] is None
 
-SMOKE_LIFECYCLE_FIELDS=("exit","signal","reaped","pty_eof","stderr_eof","drain_complete","exec_failed","drain_deadline","cleanup_error","pgid_after","descendants_left","timed_out","stderr_capped","unsupported")
+LIFECYCLE_FIELDS=("exit","signal","reaped","pty_eof","stderr_eof","drain_complete","exec_failed","drain_deadline","cleanup_error","pgid_after","descendants_left","timed_out","stderr_capped","unsupported")
 
-def _smoke_lifecycle_complete(process):
+def _lifecycle_complete(process):
     """Every lifecycle field must be recorded, whatever its value.
+
+    Shared by smoke records and measured attempts.
 
     Presence and cleanliness are separate questions: an INCONCLUSIVE record is
     allowed to be unclean, but it is never allowed to be silent.  Folding the
     two together let a stripped record pass as long as it did not claim PASS.
     """
     if not isinstance(process,dict): return False
-    if not all(k in process for k in SMOKE_LIFECYCLE_FIELDS): return False
+    if not all(k in process for k in LIFECYCLE_FIELDS): return False
     return "output_capped" in process or "pty_output_capped" in process
 
 def _smoke_lifecycle_ok(process):
     # Smoke PASS gates measurement eligibility, so it requires the same
     # presence discipline as attempt lifecycle: a stripped record must not
     # read as a clean exit.
-    if not _smoke_lifecycle_complete(process): return False
+    if not _lifecycle_complete(process): return False
     must_be_clean=("drain_deadline","cleanup_error","pgid_after","descendants_left","timed_out","stderr_capped","unsupported")
     capped="output_capped" if "output_capped" in process else "pty_output_capped"
     return (process.get("exit")==0 and ("signal" in process and process["signal"] is None) and
@@ -1431,7 +1513,7 @@ def _validate_smoke_attempt(record,trace,actions,identity,topology,phase_map,ada
     if not validate_trace_provenance(trace,record.get("harness_traffic",[])): raise ValueError("smoke trace provenance mismatch")
     process=record.get("process",{}); life=_smoke_lifecycle_ok(process)
     # Unclean is allowed for INCONCLUSIVE; incomplete never is.
-    if not _smoke_lifecycle_complete(process): raise ValueError("smoke lifecycle evidence incomplete")
+    if not _lifecycle_complete(process): raise ValueError("smoke lifecycle evidence incomplete")
     # An unclean lifecycle is what INCONCLUSIVE *means*; it is consistent
     # evidence, not a contradiction.  Real editors emit sequences this screen
     # model does not implement (mouse, bracketed paste, cursor shape, DECRQM),
@@ -1474,9 +1556,16 @@ def _validate_smoke_attempt(record,trace,actions,identity,topology,phase_map,ada
     missing=next((i for i,n in enumerate(names) if payloads[n].get("matched") is False),None)
     if missing is None:
         # Every phase matched, so the full action sequence must be present.
-        # The status still depends on the lifecycle: a participant that walked
-        # the whole sequence but did not exit cleanly is INCONCLUSIVE.
-        if record.get("status")!=("PASS" if life else "INCONCLUSIVE") or [x.get("name") for x in actions]!=list(expected_input): raise ValueError("smoke status/action mismatch")
+        # PASS additionally requires a clean lifecycle; a participant may be
+        # downgraded for a semantic reason (e.g. incremental search resolving
+        # the target before submit) even when its lifecycle is clean, but the
+        # downgrade must carry a reason -- silent sandbagging is rejected.
+        if [x.get("name") for x in actions]!=list(expected_input): raise ValueError("smoke status/action mismatch")
+        if record.get("status")=="PASS":
+            if not life: raise ValueError("smoke status/action mismatch")
+        elif record.get("status")=="INCONCLUSIVE":
+            if life and not str(record.get("reason","")).strip(): raise ValueError("clean complete smoke downgraded without a reason")
+        else: raise ValueError("smoke status/action mismatch")
     else:
         if record.get("status")!="INCONCLUSIVE" or [x.get("name") for x in actions]!=list(expected_input[:missing]+("quit",)): raise ValueError("smoke inconclusive prefix mismatch")
         first_name=names[missing]; input_name={"prompt":"prompt","typed_needle":"typed_needle","target":"submit"}.get(first_name)
@@ -1590,7 +1679,14 @@ def _validate_universal_smoke(smoke, adapters, artifact_root):
             if "UBENCH_HEAD_RECORD" not in "\n".join(phase_rows["startup_head"]["rows"]): raise ValueError("universal smoke head phase mismatch")
             if "UBENCH_TARGET_RECORD" in "\n".join(phase_rows["prompt"]["rows"]): raise ValueError("universal smoke prompt target forgery")
             needle_text="\n".join(phase_rows["typed_needle"]["rows"])
-            if "UBENCH_NEEDLE" not in needle_text or "UBENCH_TARGET_RECORD" in needle_text: raise ValueError("universal smoke needle phase mismatch")
+            if "UBENCH_NEEDLE" not in needle_text: raise ValueError("universal smoke needle phase mismatch")
+            # A target visible while the needle is still being typed means the
+            # participant searches incrementally (Helix). That is diagnostic,
+            # not invalid: the smoke only establishes eligibility, and the
+            # per-attempt causal check independently refuses to measure any
+            # attempt whose target predates submit -- which is where metrics
+            # actually come from. Gating here would discard that participant's
+            # perfectly valid startup measurement too.
             target_text="\n".join(phase_rows["target"]["rows"])
             if "UBENCH_TARGET_RECORD" not in target_text or phase_rows["target"]["output_event_index"]<=phase_rows["typed_needle"]["output_event_index"]: raise ValueError("universal smoke target phase mismatch")
             if phase_rows["startup_head"]["output_event_index"]>phase_rows["prompt"]["output_event_index"] or phase_rows["prompt"]["output_event_index"]>phase_rows["typed_needle"]["output_event_index"]: raise ValueError("universal smoke phase order mismatch")
@@ -1845,19 +1941,42 @@ def validate_universal_attempt(a,operation,digest,adapter,artifact_root,corpus_p
             if not is_missing or snap.get("rows")!=[] or any(snap.get(k) is not None for k in ("output_event_ordinal","trace_event_index","causal_time","associated_input_trace_event_index","input_write_time")): return False
         if missing_at is None and is_missing: return False
     if a.get("status")=="INCONCLUSIVE":
-        if missing_at is None: return False
-        expected_prefix=list(("quit",) if operation=="startup" else ("prompt","typed_needle","submit","quit")[:missing_at]+("quit",))
-        if names!=expected_prefix: writes_ok=False
-        if action_names!=expected_prefix: writes_ok=False
+        if missing_at is None:
+            # Every phase was observed but the attempt is still unmeasurable
+            # (killed on timeout, or an endpoint that is not causally after
+            # submit).  Nothing was skipped, so the full action sequence must
+            # be present -- the same requirement a PASS carries.
+            if names!=list(expected_names) or action_names!=list(expected_names): writes_ok=False
+        else:
+            expected_prefix=list(("quit",) if operation=="startup" else ("prompt","typed_needle","submit","quit")[:missing_at]+("quit",))
+            if names!=expected_prefix: writes_ok=False
+            if action_names!=expected_prefix: writes_ok=False
     else:
         if missing_at is not None or names!=list(expected_names) or action_names!=list(expected_names): writes_ok=False
     if action_names!=names: writes_ok=False
     reply=_universal_terminal_pairs(trace_events,a["harness_traffic"])
     if a["status"]=="INCONCLUSIVE":
         # All common evidence above is still checked for inconclusive
-        # attempts.  The only relaxed part is the phase/action completion
-        # predicate, and it must be represented by an explicit missing phase.
-        return bool(a["valid"] is False and missing_at is not None and life and topology_ok and writes_ok and reply and a["corpus_path"]==corpus_path and a["corpus_before_sha256"]==digest and a["corpus_after_sha256"]==digest)
+        # attempts.  Only the completion predicate is relaxed, and it must be
+        # explained by real evidence: either a phase was never reached, or
+        # every phase was reached but not causally -- an incrementally
+        # searching editor resolves the target while the needle is still being
+        # typed, so the observation is complete yet unmeasurable.  Requiring a
+        # missing phase left that second case with no valid representation.
+        # A participant may also simply fail to finish -- Helix does not
+        # complete a 1 GiB search inside the timeout, so it is killed. That is
+        # an honest observation about the participant, not broken evidence, so
+        # the lifecycle may be unclean here; it must still be fully *recorded*.
+        # The justification is deliberately narrow: a missing phase, or a
+        # process that demonstrably did not finish.  `not causal` is NOT
+        # accepted -- a forged endpoint would satisfy it, and a target that
+        # really did precede submit is already rejected above.  A timeout must
+        # also be coherent with having been killed, so a clean exit cannot be
+        # relabelled as one.  A complete, causal, cleanly-exited attempt can
+        # therefore never be filed here.
+        killed=p.get("timed_out") is True and (p.get("exit") is None or p.get("signal") is not None)
+        unfinished=killed or p.get("exec_failed") is True or (p.get("signal") is not None) or (p.get("exit") not in (0,None)) or bool(p.get("drain_deadline")) or bool(p.get("cleanup_error")) or bool(p.get("descendants_left")) or bool(p.get("pgid_after"))
+        return bool(a["valid"] is False and (missing_at is not None or unfinished) and _lifecycle_complete(p) and topology_ok and writes_ok and reply and a["corpus_path"]==corpus_path and a["corpus_before_sha256"]==digest and a["corpus_after_sha256"]==digest)
     result_ok=bool(a["valid"] is True and a["status"]=="PASS" and life and topology_ok and writes_ok and causal and reply and a["corpus_path"]==corpus_path and a["corpus_before_sha256"]==digest and a["corpus_after_sha256"]==digest)
     return result_ok
 
@@ -1913,6 +2032,87 @@ def validate_universal_result(r):
             if any(d.get(k)!=q.get(k) for k in ("status","repetitions","p50_ms","p95_ms")): raise ValueError("universal metric derivation mismatch")
     return True
 
+def universal_summary(result, full_descriptor):
+    """Reduce a validated result to the publishable summary.
+
+    The per-attempt evidence is far too large to keep in the repository, so
+    only the derived metrics are published.  The summary is bound to the
+    bundle it came from by `full_result`'s digest: the numbers stay checkable
+    against the evidence for anyone holding it, and a summary can never be
+    quietly re-pointed at different attempts.
+    """
+    ops={}
+    for name,v in result.get("operations",{}).items():
+        ops[name]={}
+        for op,d in v.items():
+            attempts=d.get("attempts") or []
+            ops[name][op]={"status":d.get("status"),"repetitions":d.get("repetitions"),"p50_ms":d.get("p50_ms"),"p95_ms":d.get("p95_ms"),
+                           "recorded_attempts":len(attempts),"warmup_attempts":len(d.get("warmup_attempts") or []),
+                           "timed_out_attempts":sum(1 for a in attempts if (a.get("process") or {}).get("timed_out"))}
+    smoke={"corpus":(result.get("adapter_smoke") or {}).get("corpus"),
+           "records":{n:{k:rec.get(k) for k in ("status","reason","attempts")} for n,rec in (result.get("adapter_smoke") or {}).get("records",{}).items()}}
+    return {"schema":UNIVERSAL_SUMMARY_SCHEMA,"phase":result["phase"],"execution_state":result["execution_state"],"contract_only":result.get("contract_only"),
+            "command":result.get("command"),"geometry":result["geometry"],"warmups":result["warmups"],"blocks":result["blocks"],
+            "repetitions_per_block":result["repetitions_per_block"],"corpus":result["corpus"],"artifact_root":result["artifact_root"],
+            "adapters":result["adapters"],"adapter_smoke":smoke,"operations":ops,"schedule_length":len(result.get("schedule") or []),
+            "full_result":full_descriptor,"limitations":result.get("limitations"),"c1_c5_isolation":result.get("c1_c5_isolation")}
+
+def validate_universal_summary(s, require_evidence=True):
+    """Validate the published summary against the evidence it was derived from.
+
+    `require_evidence=False` checks structure only and CANNOT detect a forged
+    metric -- it exists for inspecting a summary whose run bundle is absent,
+    and such a summary is unverified by definition.
+
+    This cannot re-derive metrics -- the attempts are not here -- so it checks
+    what a summary can be wrong about: contract fields, participant identity
+    (re-hashed against disk, exactly as the full validator does), internal
+    consistency of every metric, and the binding to the full evidence.
+    """
+    if s.get("schema")!=UNIVERSAL_SUMMARY_SCHEMA or s.get("phase")!="universal-comparison" or s.get("geometry")!=[200,50] or s.get("warmups")!=3 or s.get("blocks")!=2 or s.get("repetitions_per_block")!=16: raise ValueError("invalid universal summary contract")
+    names=[a.get("name") for a in s.get("adapters",[])]
+    if names!=list(UNIVERSAL_ADAPTER_ORDER): raise ValueError("universal summary adapter order mismatch")
+    if any(not _universal_adapter_ok(a,s["corpus"]["path"]) for a in s["adapters"]): raise ValueError("universal summary adapter declaration mismatch")
+    adapters={a["name"]:a for a in s["adapters"]}
+    if adapters["vis"].get("status")!="REJECTED_UNSUPPORTED" or adapters["vi"].get("status")!="ALIAS_OF": raise ValueError("universal summary alias/rejection contract failure")
+    if set((s.get("adapter_smoke") or {}).get("records",{}))!=set(UNIVERSAL_ADAPTER_ORDER): raise ValueError("universal summary smoke matrix mismatch")
+    total=s["blocks"]*s["repetitions_per_block"]
+    for name,v in s.get("operations",{}).items():
+        if name not in adapters: raise ValueError("universal summary names an undeclared adapter")
+        for op,d in v.items():
+            if op not in ("startup","search"): raise ValueError("universal summary operation mismatch")
+            status=d.get("status")
+            if status=="MEASURED":
+                if d.get("repetitions")!=total or not all(isinstance(d.get(k),(int,float)) for k in ("p50_ms","p95_ms")): raise ValueError("universal summary measured metric mismatch")
+                if d.get("p50_ms")>d.get("p95_ms"): raise ValueError("universal summary quantile ordering mismatch")
+                if d.get("recorded_attempts")!=total or d.get("timed_out_attempts"): raise ValueError("universal summary measured attempt mismatch")
+            elif status=="INCONCLUSIVE":
+                if d.get("p50_ms") is not None or d.get("p95_ms") is not None: raise ValueError("universal summary inconclusive metric mismatch")
+            else: raise ValueError("universal summary operation status mismatch")
+    # Every identity-qualified participant must be present, so an operation
+    # cannot be dropped to hide a result even when the evidence is absent.
+    expected_names={n for n,a in adapters.items() if a.get("status")=="IDENTITY_QUALIFIED"}
+    if set(s.get("operations",{}))!=expected_names or any(set(v)!={"startup","search"} for v in s["operations"].values()): raise ValueError("universal summary matrix mismatch")
+    full=s.get("full_result")
+    if not isinstance(full,dict) or not isinstance(full.get("sha256"),str) or not re.fullmatch(r"[0-9a-f]{64}",full["sha256"]) or not isinstance(full.get("size"),int) or full["size"]<=0: raise ValueError("universal summary is not bound to its evidence")
+    p=Path(full.get("path",""))
+    if not p.is_file():
+        # Without the bundle nothing here is checkable: every metric would be
+        # an unverified assertion, and halving a p50 would pass. Say so rather
+        # than return True on structure alone.
+        if require_evidence: raise ValueError("universal summary evidence is unavailable; metrics cannot be verified")
+    else:
+        # The digest alone commits to a file; it does not tie these numbers to
+        # it. When the evidence is available, validate it and require the
+        # summary to be exactly what it derives -- otherwise the metrics here
+        # are unverified assertions.
+        if (full["sha256"],full["size"])!=sha(p): raise ValueError("universal summary digest does not match the retained evidence")
+        try: evidence=json.loads(p.read_text())
+        except (OSError,ValueError,UnicodeDecodeError): raise ValueError("retained universal evidence is unreadable")
+        validate_universal_result(evidence)
+        if universal_summary(evidence,full)!=s: raise ValueError("universal summary does not match its evidence")
+    return True
+
 def universal_report_markdown(r):
     contract_only=r.get("execution_state")=="not_started"
     opening="**Contract-only scaffold.** No participant attempts were executed. All operations are therefore `INCONCLUSIVE`; this is not a measurement report. `compare --allow-large --execute` remains Oracle-gated on `test_oracle_mutation_probes_are_rejected`." if contract_only else "**Completed execution.** Results below are evidence-bound observations only; no rankings or C1–C5 claims are produced."
@@ -1934,9 +2134,22 @@ def universal_report_markdown(r):
                 lines.append(f"| {n} | {op} | 0 | — | — | {'INCONCLUSIVE' if status not in ('ALIAS_OF','REJECTED_UNSUPPORTED') else status} | Smoke ineligible ({reason}); {caveat} |")
             continue
         for op in ("search","startup"):
-            d=v[op]
-            lines.append(f"| {n} | {op} | {d.get('repetitions',0)} | {d.get('p50_ms') if d.get('p50_ms') is not None else '—'} | {d.get('p95_ms') if d.get('p95_ms') is not None else '—'} | {d.get('status')} | {caveat} |")
-    lines += ["","## Contract",f"- Schema: `{r['schema']}`; geometry `{r['geometry'][0]}x{r['geometry'][1]}`; warmups `{r['warmups']}`; two rotated blocks of 16 measured repetitions (warmups excluded).","- Each eligible adapter/operation retains three warmups plus a contiguous global schedule for the two rotated 16-repetition blocks; warmups are excluded from metrics. Startup uses pre-fork-to-head timing; search uses submit-to-target timing.","- Only 32 valid causal attempts expose headline p50/p95; no rankings are produced.","- PTY metrics describe application emission and terminal-model events, not physical rendering.","- Phase 1 runs a bounded per-adapter small-fixture smoke for eligibility; smoke statuses are diagnostic and do not create participant metrics.","- Teddy uses the documented positional invocation only: `[teddy, corpus]`; the corpus is read-only on disk and manager mode is disabled. Its shipped topology is the staged Teddy root plus the exact sibling `teddy-highlight` helper. `vi` must be an exact vim alias and `/usr/bin/vis` is rejected.","- Phase 2 must validate raw-attempt, timestamped trace replay, artifact, causal timing, terminal-traffic, corpus-integrity, topology, and cleanup evidence before an operation becomes `MEASURED`."]
+            d=v[op]; note=""
+            # Counts come from the summary when present, else from the full
+            # attempt records, so the same report is produced from either.
+            recorded=d.get("recorded_attempts",len(d.get("attempts") or []))
+            if d.get("status")!="MEASURED" and recorded:
+                # An eligible participant whose attempts did not yield a metric
+                # must say why, or the row is indistinguishable from one that
+                # was never run.
+                total=recorded; timed=d.get("timed_out_attempts",sum(1 for x in (d.get("attempts") or []) if (x.get("process") or {}).get("timed_out")))
+                note=(f"{timed}/{total} attempts exceeded the harness timeout; " if timed else f"{total} attempts did not validate causally; ")
+            lines.append(f"| {n} | {op} | {d.get('repetitions',0)} | {d.get('p50_ms') if d.get('p50_ms') is not None else '—'} | {d.get('p95_ms') if d.get('p95_ms') is not None else '—'} | {d.get('status')} | {note}{caveat} |")
+    full=r.get("full_result") if r.get("schema")==UNIVERSAL_SUMMARY_SCHEMA else None
+    lines += ["","## Contract"]
+    if full:
+        lines += [f"- **This published result is a summary.** It carries derived metrics only. The per-attempt evidence ({sum(d.get('recorded_attempts',0)+d.get('warmup_attempts',0) for v in r.get('operations',{}).values() for d in v.values())} attempts, {full.get('size',0)/1e6:.1f} MB) is too large for the repository and is retained in the run bundle at `{full.get('path')}`, bound to this summary by SHA-256 `{full.get('sha256','')[:16]}…`. Re-run `compare --allow-large --execute` to regenerate it."]
+    lines += [f"- Schema: `{r['schema']}`; geometry `{r['geometry'][0]}x{r['geometry'][1]}`; warmups `{r['warmups']}`; two rotated blocks of 16 measured repetitions (warmups excluded).","- Each eligible adapter/operation retains three warmups plus a contiguous global schedule for the two rotated 16-repetition blocks; warmups are excluded from metrics. Startup uses pre-fork-to-head timing; search uses submit-to-target timing.","- Only 32 valid causal attempts expose headline p50/p95; no rankings are produced.","- PTY metrics describe application emission and terminal-model events, not physical rendering.","- Phase 1 runs a bounded per-adapter small-fixture smoke for eligibility; smoke statuses are diagnostic and do not create participant metrics.","- Teddy uses the documented positional invocation only: `[teddy, corpus]`; the corpus is read-only on disk and manager mode is disabled. Its shipped topology is the staged Teddy root plus the exact sibling `teddy-highlight` helper. `vi` must be an exact vim alias and `/usr/bin/vis` is rejected.","- Phase 2 must validate raw-attempt, timestamped trace replay, artifact, causal timing, terminal-traffic, corpus-integrity, topology, and cleanup evidence before an operation becomes `MEASURED`."]
     if len(lines)>250: raise ValueError("universal report too long")
     return "\n".join(lines)+"\n"
 
@@ -2025,7 +2238,15 @@ def compare(a):
     smoke={x["name"]:_universal_adapter_smoke(x,smoke_corpus,run) for x in smoke_adapters}; smoke_object={"corpus":str(smoke_corpus),"records":smoke};
     if getattr(a,"execute",False):
         result=execute_universal_schedule(adapters,corpus,run,smoke=smoke_object,corpus_meta=meta)
-        validate_universal_result(result); (REPO/"bench/results/comparison.json").write_text(json.dumps(result,indent=2,sort_keys=True)+"\n"); (REPO/"docs/bench_comparison.md").write_text(universal_report_markdown(result)); validate_universal_report(result,(REPO/"docs/bench_comparison.md").read_text()); print(json.dumps(result,indent=2,sort_keys=True)); return
+        # Validate the complete evidence, retain it beside its artifacts, then
+        # publish only the digest-bound summary: the full record is tens of MB
+        # of per-attempt evidence and does not belong in the repository.
+        validate_universal_result(result)
+        full=run/"result-full.json"; full.write_text(json.dumps(result,indent=2,sort_keys=True)+"\n"); h,z=sha(full)
+        summary=universal_summary(result,{"path":str(full),"sha256":h,"size":z}); validate_universal_summary(summary)
+        (REPO/"bench/results").mkdir(parents=True,exist_ok=True); (REPO/"bench/results/comparison.json").write_text(json.dumps(summary,indent=2,sort_keys=True)+"\n")
+        (REPO/"docs/bench_comparison.md").write_text(universal_report_markdown(summary)); validate_universal_report(summary,(REPO/"docs/bench_comparison.md").read_text())
+        print(json.dumps(summary,indent=2,sort_keys=True)); return
     operations={a["name"]:{op:{"status":"INCONCLUSIVE","repetitions":0,"p50_ms":None,"p95_ms":None,"warmup_attempts":[],"attempts":[]} for op in ("startup","search")} for a in adapters if a["status"]=="IDENTITY_QUALIFIED"}; result={"schema":UNIVERSAL_SCHEMA,"phase":"universal-comparison","command":"python3 bench/bench.py compare --allow-large","contract_only":True,"execution_state":"not_started","schedule":[],"artifact_root":{"path":str(run.relative_to(REPO))},"geometry":[200,50],"warmups":3,"blocks":2,"repetitions_per_block":16,"corpus":meta,"adapters":adapters,"adapter_smoke":smoke_object,"operations":operations,"limitations":["Contract-only scaffold: no participant metric attempts were executed; Phase 2 must execute the declared matrix"],"c1_c5_isolation":"Universal comparison is non-claim evidence and cannot modify Teddy C1-C5."}; validate_universal_result(result); (REPO/"bench/results").mkdir(parents=True,exist_ok=True); (REPO/"bench/results/comparison.json").write_text(json.dumps(result,indent=2,sort_keys=True)+"\n"); (REPO/"docs/bench_comparison.md").write_text(universal_report_markdown(result)); validate_universal_report(result,(REPO/"docs/bench_comparison.md").read_text()); print(json.dumps(result,indent=2,sort_keys=True))
 
 def helper(a):

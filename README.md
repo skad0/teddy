@@ -103,24 +103,38 @@ shared caveats.
 
 `python3 bench/bench.py compare --allow-large --execute` runs a separate
 universal comparison against nvim, vim, hx, kak, and less on a deterministic
-1 GiB corpus. Results are in
-[`docs/bench_comparison.md`](docs/bench_comparison.md):
+1 GiB corpus: 32 measured repetitions per participant per operation, in two
+rotated blocks, after three discarded warmups. Full results and caveats are in
+[`docs/bench_comparison.md`](docs/bench_comparison.md).
 
-| Adapter | Operation | Reps | p50 (ms) | p95 (ms) | Status |
-|---|---|---:|---:|---:|---|
-| teddy-shipped | startup | 32 | 5.03 | 6.62 | **MEASURED** |
-| teddy-shipped | search | 32 | 304.72 | 315.60 | **MEASURED** |
-| nvim, vim, hx, kak | both | 0 | — | — | INCONCLUSIVE |
-| less | both | 0 | — | — | INCONCLUSIVE |
+| Participant | startup p50 | startup p95 | search p50 | search p95 |
+|---|---:|---:|---:|---:|
+| **teddy** | **5.75** | **7.33** | **308.26** | **346.35** |
+| less | 6.93 | 9.23 | 7376.36 | 7597.40 |
+| hx | 591.93 | 670.97 | — | — |
+| nvim | 1167.15 | 1329.96 | 1132.84 | 1192.70 |
+| kak | 1272.93 | 1347.32 | 1076.75 | 1195.95 |
+| vim | 1859.75 | 1984.16 | 1325.39 | 1444.41 |
+
+All values are milliseconds, all `MEASURED` on 32 valid attempts, except
+`hx search`, which is `INCONCLUSIVE`: 32/32 attempts exceeded the harness
+timeout, so Helix does not complete a 1 GiB search inside it.
 
 Startup is pre-fork to the causal head event; search is submit to the causal
-target event 512 MiB into the file. **Only teddy produced measurements.** The
-comparators are ineligible, not slower: eligibility requires a clean smoke,
-and every one of them drives terminal features this harness's screen model
-does not implement (mouse tracking, bracketed paste, cursor shape, DECRQM), so
-their sessions do not end cleanly. `less` never matched the head marker at
-all. Each exclusion is recorded with its reason rather than dropped, and **no
-rankings are produced** — these numbers do not say teddy is faster than vim.
+target event 512 MiB into the file. Every participant runs from an isolated
+`HOME` and XDG roots, so no user configuration is loaded.
+
+**Read the `less` row before drawing conclusions.** It is the control, not a
+competitor: a demand-driven pager is the only other participant here that does
+not ingest the file, and it starts in 6.93 ms against teddy's 5.75 ms. The
+600–1900 ms startups belong to tools that read and index 1 GiB. So the startup
+column mostly measures *whether a tool loads the file*, not how fast its code
+is. Teddy's search result is the less derivative claim: 308 ms is 3.5× the
+nearest editor and 24× `less`, on the same bytes.
+
+**No rankings are produced**, and this is not a general editor benchmark — it
+is two narrow read-only operations, on one corpus shape that suits teddy
+(64-byte records), on one machine, with a warm page cache.
 
 Execution is gated on an adversarial oracle,
 `test_oracle_mutation_probes_are_rejected`, which mutates a valid result and

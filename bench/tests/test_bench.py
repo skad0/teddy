@@ -413,6 +413,55 @@ class Phase1Tests(unittest.TestCase):
         self.assertTrue(s.write(b"/UBENCH_NEEDLE\r",lambda sc:sc.contains("UBENCH_TARGET_RECORD"),"search")); self.assertTrue(s.close())
         record=s.record(); self.assertEqual(record["exit"],0); self.assertTrue(any(x["kind"]=="DSR_REPLY" for x in record["harness_traffic"])); self.assertTrue(any(x["kind"]=="DA_REPLY" for x in record["harness_traffic"])); self.assertFalse(record["descendants_left"]); self.assertTrue(record["drain_complete"])
 
+    def test_screen_models_real_editor_sequences(self):
+        """Real editors drive sequences this model used to reject wholesale.
+
+        Consuming the content-neutral ones is what makes comparators eligible
+        to be measured. The two that DO move the grid are implemented, and the
+        allow-list must keep rejecting modes that change what is drawn --
+        waving those through would silently corrupt every endpoint match.
+        """
+        neutral={
+            "mouse":b"\033[?1002h\033[?1006h\033[?1000l","bracketed paste":b"\033[?2004h\033[?2004l",
+            "focus":b"\033[?1004h","cursor blink":b"\033[?12h\033[?12l","cursor shape":b"\033[2 q\033[0 q",
+            "DECRQM":b"\033[?2026$p\033[?69$p","SGR sub-params":b"\033[4:3m\033[0m",
+            "kitty keyboard":b"\033[>5u\033[<u\033[?u","modifyOtherKeys":b"\033[>4;2m",
+            "XTWINOPS title":b"\033[22;0;0t\033[23;0;0t","keypad":b"\033=\033>","charset":b"\033(B",
+            "OSC BEL":b"\033]0;title\007","OSC ST":b"\033]2;title\033\\","DCS ST":b"\033P+q544e\033\\",
+            "DA/DSR":b"\033[>c\033[5n\033[6n",
+        }
+        for name,seq in neutral.items():
+            s=bench.Screen(10,4); s.feed(b"KEEP"); s.feed(seq); s.finish()
+            self.assertEqual(s.unsupported,[],f"{name} should be consumed as content-neutral")
+            self.assertTrue(s.contains("KEEP"),f"{name} must not disturb the grid")
+        # An unrecognised mode, or one that moves content, stays unsupported.
+        # ?2027 alters grapheme clustering (cell width), so it is not neutral.
+        for mode in ("?999h","?7l","?3h","?6h","?69h","?2027h"):
+            s=bench.Screen(10,4); s.feed(b"\033["+mode.encode()); s.finish()
+            self.assertEqual(s.unsupported,[mode],f"{mode} must not be waved through")
+        # Sequences that change how *subsequent* bytes render must be flagged,
+        # even though their own bytes draw nothing.
+        s=bench.Screen(10,4); s.feed(b"\033(0"); s.finish()
+        self.assertTrue(s.unsupported,"DEC Special Graphics charset must not be treated as neutral")
+        s=bench.Screen(10,4); s.feed(b"\033Pq#0;2;0;0;0\033\\"); s.finish()
+        self.assertTrue(s.unsupported,"Sixel DCS renders content and must not be silently consumed")
+        s=bench.Screen(10,4); s.feed(b"\033P+q544e\033\\"); s.finish()
+        self.assertEqual(s.unsupported,[],"an inert termcap DCS query is still consumed cleanly")
+        s=bench.Screen(10,4); s.feed(b"ABCDEFGH\033[1;3H\033[3X"); self.assertEqual(s.text()[0],"AB   FGH")
+        s=bench.Screen(10,4); s.feed(b"AB\r\nCD\033[1;2H\033[0J"); self.assertEqual(s.text()[:2],["A",""])
+        s=bench.Screen(10,4); s.feed(b"AB\r\nCD\033[2;1H\033[1J"); self.assertEqual(s.text()[:2],[""," D"])
+        s=bench.Screen(10,4); s.feed(b"\033[1;3r"); s.feed(b"A\r\nB\r\nC\r\nD\r\nE")
+        self.assertEqual(s.text(),["C","D","E",""],"LF at the bottom margin must scroll only inside the region")
+        s=bench.Screen(10,3); s.feed(b"1\r\n2\r\n3\r\n4")
+        self.assertEqual(s.text(),["2","3","4"],"LF at the last row must scroll the screen")
+        # DECSTBM homes to the absolute top-left, not the top margin, because
+        # origin mode (?6) is never enabled.
+        s=bench.Screen(10,5); s.feed(b"\033[2;4r"); s.feed(b"X")
+        self.assertEqual(s.text()[0],"X","DECSTBM must home to absolute row 1 with origin mode reset")
+        # A cursor below the scrolling region must not scroll it.
+        s=bench.Screen(10,5); s.feed(b"\033[1;2r\033[5;1HZ\n")
+        self.assertEqual(s.text()[4],"Z","LF below the bottom margin must not scroll the region")
+
     def test_unclean_smoke_is_inconclusive_evidence_not_a_hard_failure(self):
         """An unclean lifecycle must downgrade a participant, not abort the run.
 
@@ -688,6 +737,94 @@ class Phase1Tests(unittest.TestCase):
             supplied={"path":str(corpus),"size":123,"sha256":"c"*64,"record_bytes":64,"records":7,"head_marker":"UBENCH_HEAD_RECORD","needle":"UBENCH_NEEDLE","target_marker":"UBENCH_TARGET_RECORD","tail_marker":"UBENCH_TAIL_RECORD","head_offset":0,"target_offset":11,"needle_offset":22,"tail_offset":33,"stream_marker":"sentinel-not-recomputable","read_only_mode":"0o444"}
             result=bench.execute_universal_schedule(adapters,str(corpus),root/"artifacts",smoke=smoke,corpus_meta=supplied)
             self.assertEqual(result["corpus"],supplied,"executor recomputed corpus metadata instead of using the supplied metadata")
+
+    def test_published_summary_is_bound_to_its_evidence(self):
+        """The published JSON carries metrics only, tied to the full bundle.
+
+        Per-attempt evidence is far too large to commit, so the repository
+        holds a summary. It must not become a free-floating set of numbers:
+        the digest binds it to the bundle it was derived from, and identity is
+        still re-hashed against disk.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            result=self._strict_universal_fixture(d)
+            with mock.patch.object(bench,"validate_universal_corpus",return_value=True):
+                self.assertTrue(bench.validate_universal_result(result))
+            full=Path(d)/"result-full.json"; full.write_text(json.dumps(result,indent=2,sort_keys=True)+"\n")
+            h,z=bench.sha(full)
+            summary=bench.universal_summary(result,{"path":str(full),"sha256":h,"size":z})
+            with mock.patch.object(bench,"validate_universal_corpus",return_value=True):
+                self.assertTrue(bench.validate_universal_summary(summary))
+            self.assertLess(len(json.dumps(summary)),len(json.dumps(result))//10,"summary must be far smaller than the evidence")
+            # The report must be identical apart from the schema it declares.
+            strip=lambda t:[l for l in t.splitlines() if not l.startswith(("- Schema:","- **This published result is a summary."))]
+            self.assertEqual(strip(bench.universal_report_markdown(result)),strip(bench.universal_report_markdown(summary)))
+            self.assertTrue(bench.validate_universal_report(summary,bench.universal_report_markdown(summary)))
+            # Rejections: a summary detached from its evidence, or forged metrics.
+            def plausible_metric(s):
+                # The dangerous forgery is a believable number, not a broken
+                # one: it passes every structural check, so only re-deriving
+                # the summary from the evidence can reject it.
+                d=s["operations"]["teddy-shipped"]["startup"]; d["p50_ms"]=d["p50_ms"]/2; d["p95_ms"]=d["p95_ms"]/2
+            for label,mutate in (
+                ("stale digest",lambda s: s["full_result"].__setitem__("sha256","f"*64)),
+                ("plausible forged metric",plausible_metric),
+                ("dropped operation",lambda s: s["operations"].pop("teddy-shipped")),
+                ("dropped one operation cell",lambda s: s["operations"]["teddy-shipped"].pop("startup")),
+                ("forged measured metric",lambda s: next(iter(s["operations"]["teddy-shipped"].values())).__setitem__("repetitions",5)),
+                ("inconclusive carrying a metric",lambda s: s["operations"]["teddy-shipped"]["startup"].update({"status":"INCONCLUSIVE","p50_ms":1.0})),
+                ("quantiles out of order",lambda s: s["operations"]["teddy-shipped"]["startup"].update({"p50_ms":9e9})),
+                ("unknown status",lambda s: s["operations"]["teddy-shipped"]["startup"].__setitem__("status","GREAT")),
+            ):
+                bad=json.loads(json.dumps(summary)); mutate(bad)
+                with mock.patch.object(bench,"validate_universal_corpus",return_value=True):
+                    with self.assertRaises(ValueError,msg=f"{label} accepted"): bench.validate_universal_summary(bad)
+            # Absent evidence must not read as verified: without the bundle a
+            # halved metric is undetectable, so the summary is rejected rather
+            # than silently downgraded to a structural check.
+            detached=json.loads(json.dumps(summary)); detached["full_result"]["path"]=str(Path(d)/"gone.json")
+            plausible_metric(detached)
+            with mock.patch.object(bench,"validate_universal_corpus",return_value=True):
+                with self.assertRaises(ValueError,msg="summary with missing evidence accepted as verified"): bench.validate_universal_summary(detached)
+                self.assertTrue(bench.validate_universal_summary(detached,require_evidence=False),"structure-only check should still pass")
+
+    def test_participant_that_times_out_is_representable_but_never_measured(self):
+        """A participant that cannot finish is an observation, not bad evidence.
+
+        Helix does not complete a 1 GiB search inside the timeout and is
+        killed. Requiring a clean lifecycle *and* a missing phase left that
+        attempt with no valid category, so the whole run was rejected. It must
+        validate as INCONCLUSIVE -- and must never reach a metric.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            result=self._strict_universal_fixture(d)
+            adapter=next(x for x in result["adapters"] if x["name"]=="teddy-shipped")
+            args=("startup","b"*64,adapter,result["artifact_root"],result["corpus"]["path"])
+            base=result["operations"]["teddy-shipped"]["startup"]["attempts"][0]
+            with mock.patch.object(bench,"validate_universal_corpus",return_value=True):
+                def killed(a):
+                    a["status"]="INCONCLUSIVE"; a["valid"]=False
+                    a["process"].update({"exit":None,"signal":9,"timed_out":True,"reaped":True})
+                probe=self._probe_attempt(base,result["artifact_root"]["path"],"timeout",killed)
+                self.assertTrue(bench.validate_universal_attempt(probe,*args),"a timed-out attempt must be representable")
+                self.assertEqual(bench.universal_metric([probe]*32)["status"],"INCONCLUSIVE","timed-out attempts must never derive a metric")
+                # Evidence may be unclean, but never incomplete.
+                def killed_and_stripped(a):
+                    killed(a); a["process"].pop("timed_out")
+                probe2=self._probe_attempt(base,result["artifact_root"]["path"],"timeout-stripped",killed_and_stripped)
+                self.assertFalse(bench.validate_universal_attempt(probe2,*args),"incomplete lifecycle must still be rejected")
+                # A measurable attempt must not be downgradable. Each of these
+                # is a distinct route that a broad "not causal or not life"
+                # justification would have waved through.
+                def sandbag(a): a["status"]="INCONCLUSIVE"; a["valid"]=False
+                def forged_endpoint(a): sandbag(a); a["endpoint"]="NOT_THE_HEAD"
+                def incoherent_timeout(a):
+                    # Claims a timeout while reporting a clean exit: a clean
+                    # run must not be relabelled as one that never finished.
+                    sandbag(a); a["process"].update({"timed_out":True,"exit":0,"signal":None})
+                for label,mutate in (("plain",sandbag),("forged endpoint",forged_endpoint),("incoherent timeout",incoherent_timeout)):
+                    probe=self._probe_attempt(base,result["artifact_root"]["path"],"sandbag-"+label.replace(" ","-"),mutate)
+                    self.assertFalse(bench.validate_universal_attempt(probe,*args),f"measurable attempt downgraded via {label}")
 
     def test_attempt_validates_when_the_app_leaves_the_alternate_screen(self):
         """The endpoint marker need not survive into the post-quit screen.

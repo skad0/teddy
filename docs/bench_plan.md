@@ -220,16 +220,48 @@ after executable identity. A completed result is rejected unless every
 warmup and measured coordinate is present and causally bound; the second
 measured block is reversed.
 
-The checked-in result is now an executed one: `teddy-shipped` is `MEASURED`
-for both operations on 32 valid attempts each, and every other participant is
-an explicit `INCONCLUSIVE` row carrying its exclusion reason. Only
-`teddy-shipped` passed the eligibility smoke. The other five drive terminal
-features this screen model does not implement — mouse tracking, bracketed
-paste, cursor shape, DECRQM — so their sessions do not end cleanly, and `less`
-never matched the head marker. That is a limit of the harness, not a
-measurement of those editors: they are ineligible, not slow. Making them
-measurable means implementing those features in the screen model, not
-loosening the smoke.
+The checked-in result is an executed six-participant comparison. Eleven of the
+twelve adapter/operation cells are `MEASURED` on 32 valid attempts each; the
+twelfth, `hx search`, is `INCONCLUSIVE` because 32/32 attempts exceeded the
+harness timeout — Helix does not complete a 1 GiB search inside it, which is
+an observation about Helix rather than a defect in the evidence.
+
+Comparators became measurable once `Screen` learned the sequences real editors
+actually emit. Most are content-neutral (mouse reporting, bracketed paste,
+cursor shape, DECRQM, title, keypad, charset, DCS/OSC strings) and are
+consumed as no-ops; `ECH`, `ED 0/1` and `DECSTBM` move the grid and are
+implemented. Neutral private modes are an **allow-list**, so `?3` (DECCOLM),
+`?6` (origin), `?7` (autowrap) and `?69` (margins) still register as
+unsupported: waving those through would make a smoke pass while silently
+corrupting every endpoint match.
+
+`INCONCLUSIVE` has two distinct causes, and both must be representable: an
+incomplete observation (a phase was never reached) and a complete but
+unmeasurable one (killed on timeout, or an endpoint that is not causally after
+submit). Requiring a missing phase left the second case with no valid
+representation and rejected an entire otherwise-good run. Evidence may be
+unclean, but it may never be incomplete, and an attempt that is complete,
+causal and clean cannot be filed as inconclusive — a measurable attempt cannot
+be quietly downgraded.
+
+**Known gap — a phase can be falsely declared missing.** Adversarial review
+showed that marking a valid attempt's phase descriptor `missing` and rehashing
+its artifacts is accepted: the validator binds *matched* phases to the trace
+but does not independently re-derive that a *missing* phase was genuinely
+unobservable. The blast radius is suppression, not fabrication — an attempt
+downgraded this way is excluded from `universal_metric`, which counts only
+`PASS`/`valid` attempts, so the operation degrades to `INCONCLUSIVE` and no
+false number can be published. Closing it properly requires re-deriving each
+phase's endpoint under the executor's own baseline/predicate semantics
+offline; the naive check ("the marker never appears in the replayed screen")
+is wrong and would reject the genuine `hx search` timeout evidence, where all
+three markers do appear but outside their causal windows.
+
+The published `bench/results/comparison.json` is a **summary**
+(`teddy-s9-universal-comparison-summary-1`): derived metrics, participant
+identity and smoke outcomes only. The per-attempt evidence is ~60 MB and stays
+in the run bundle as `result-full.json`, bound to the summary by SHA-256 so
+the published numbers remain checkable against the bundle they came from.
 
 `compare --allow-large --execute` is gated by the Phase 1 Oracle, which is a
 runnable adversarial check rather than a scheduled human review:
