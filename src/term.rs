@@ -3,11 +3,17 @@
 use rustix::event::{PollFd, PollFlags, Timespec};
 use rustix::termios::{self, OptionalActions, Termios};
 use std::io::{self, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
 /// Original termios, kept for the panic hook — restore must work from
 /// anywhere, including after `RawGuard` was leaked by a panic unwind.
 static ORIG: OnceLock<Termios> = OnceLock::new();
+
+/// Set while raw mode + alternate screen are active, so restore runs once:
+/// a second `?1049l` (panic hook, then guard drop on unwind) would DECRC the
+/// cursor back over the crash report.
+static ENTERED: AtomicBool = AtomicBool::new(false);
 
 pub struct RawGuard(());
 
@@ -28,6 +34,7 @@ pub fn enter() -> io::Result<RawGuard> {
     let mut raw = orig;
     raw.make_raw();
     termios::tcsetattr(stdin, OptionalActions::Flush, &raw)?;
+    ENTERED.store(true, Ordering::SeqCst);
     // guard exists from this point: if the writes below fail, the early
     // return drops it and termios is restored (stdout's lock is reentrant)
     let guard = RawGuard(());
@@ -39,9 +46,12 @@ pub fn enter() -> io::Result<RawGuard> {
 
 /// Restore terminal state. Idempotent; safe to call from a panic hook.
 pub fn restore() {
-    let mut out = io::stdout();
-    let _ = out.write_all(b"\x1b[0m\x1b[?25h\x1b[?1049l");
-    let _ = out.flush();
+    // escapes once; termios every time, so a failed restore can be retried
+    if ENTERED.swap(false, Ordering::SeqCst) {
+        let mut out = io::stdout();
+        let _ = out.write_all(b"\x1b[0m\x1b[?25h\x1b[?1049l");
+        let _ = out.flush();
+    }
     if let Some(orig) = ORIG.get() {
         let _ = termios::tcsetattr(rustix::stdio::stdin(), OptionalActions::Flush, orig);
     }

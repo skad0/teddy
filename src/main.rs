@@ -113,31 +113,9 @@ fn main() -> ExitCode {
         }
     };
 
-    // open buffers before raw mode so errors print on a sane terminal
-    let mut buffers: Vec<Buffer> = Vec::new();
-    if args.files.is_empty() {
-        buffers.push(Buffer::untitled());
-    } else {
-        for f in &args.files {
-            match Buffer::open(f) {
-                Ok(mut b) => {
-                    if args.follow {
-                        b.follow = true;
-                        b.readonly = true; // reload discards edits anyway
-                        b.cursor = b.len();
-                    }
-                    buffers.push(b)
-                }
-                Err(e) => {
-                    eprintln!("teddy: {}: {e}", f.display());
-                    return ExitCode::FAILURE;
-                }
-            }
-        }
-    }
-
     // panic path per spec §20: restore terminal (also leaves the alternate
-    // screen), write the crash log, then print its path as the last line
+    // screen), write the crash log, then print its path as the last line.
+    // Installed before the open loop so storage panics are logged too.
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         term::restore();
@@ -162,6 +140,29 @@ fn main() -> ExitCode {
             Err(e) => writeln!(err, "teddy: could not write crash log: {e}"),
         };
     }));
+
+    // open buffers before raw mode so errors print on a sane terminal
+    let mut buffers: Vec<Buffer> = Vec::new();
+    if args.files.is_empty() {
+        buffers.push(Buffer::untitled());
+    } else {
+        for f in &args.files {
+            match Buffer::open(f) {
+                Ok(mut b) => {
+                    if args.follow {
+                        b.follow = true;
+                        b.readonly = true; // reload discards edits anyway
+                        b.cursor = b.len();
+                    }
+                    buffers.push(b)
+                }
+                Err(e) => {
+                    eprintln!("teddy: {}: {e}", f.display());
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+    }
 
     let guard = match term::enter() {
         Ok(g) => g,
