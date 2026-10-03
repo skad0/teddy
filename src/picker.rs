@@ -108,10 +108,7 @@ impl Picker {
 
     fn push_tree(&mut self, dir: &Path, depth: usize) {
         for (path, is_dir) in self.list_dir(dir) {
-            let name = path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
+            let name = crate::buffer::display_name(&path);
             let expanded = is_dir && self.expanded.contains(&path);
             self.entries.push(Entry {
                 path: path.clone(),
@@ -153,7 +150,7 @@ impl Picker {
                         path: path.clone(),
                         depth: 0,
                         is_dir,
-                        name: rel,
+                        name: chrome_rel(&self.root, &path),
                     });
                 }
                 if is_dir && w.visited < WALK_CAP {
@@ -184,6 +181,13 @@ impl Picker {
             Some(e.path.clone())
         }
     }
+}
+
+/// Search-result label: the root-relative path with control and invalid
+/// bytes as `\xNN`, matching the tab name the file gets once opened.
+fn chrome_rel(root: &Path, p: &Path) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    crate::render::escape_chrome(p.strip_prefix(root).unwrap_or(p).as_os_str().as_bytes())
 }
 
 #[cfg(test)]
@@ -239,6 +243,32 @@ mod tests {
         p.filter_changed();
         while !p.step(4) {}
         assert!(p.entries.is_empty(), "c.log is gitignored");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn hostile_names_are_escaped_like_tabs() {
+        use std::os::unix::ffi::OsStrExt;
+        let root = tree("hostile");
+        let evil = std::ffi::OsStr::from_bytes(b"ev\x1b[2J\xc2\x9b.txt");
+        std::fs::write(root.join("sub").join(evil), b"e").unwrap();
+        let mut p = Picker::new(root.clone());
+        p.sel = 0;
+        p.activate();
+        assert!(p
+            .entries
+            .iter()
+            .any(|e| e.name == "ev\\x1B[2J\\xC2\\x9B.txt"));
+        p.filter = "ev".into();
+        p.filter_changed();
+        while !p.step(4) {}
+        let names: Vec<&str> = p.entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, ["sub/ev\\x1B[2J\\xC2\\x9B.txt"]);
+        // filtering matches raw names, not their escaped display text
+        p.filter = "x1b".into();
+        p.filter_changed();
+        while !p.step(4) {}
+        assert!(p.entries.is_empty());
         std::fs::remove_dir_all(&root).unwrap();
     }
 }

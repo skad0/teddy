@@ -649,7 +649,7 @@ impl Buffer {
 
 /// Tab/status name: raw file-name bytes with control and invalid bytes as
 /// `\xNN`, so nothing hostile survives into chrome or reads as U+FFFD.
-fn display_name(path: &Path) -> String {
+pub(crate) fn display_name(path: &Path) -> String {
     use std::os::unix::ffi::OsStrExt;
     let raw = path.file_name().unwrap_or(path.as_os_str());
     crate::render::escape_chrome(raw.as_bytes())

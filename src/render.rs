@@ -428,6 +428,21 @@ fn truncated(s: &str, max: usize) -> &str {
         while end > 0 && !s.is_char_boundary(end) {
             end -= 1;
         }
+        // never split an escape_chrome `\xNN` token: the text is already
+        // escaped (names arrive pre-escaped), so the token is recovered by shape
+        let b = s.as_bytes();
+        for i in end.saturating_sub(3)..end {
+            if b[i] == b'\\'
+                && b.get(i + 1) == Some(&b'x')
+                && b.get(i + 2..i + 4).is_some_and(|h| {
+                    h.iter()
+                        .all(|c| c.is_ascii_digit() || (b'A'..=b'F').contains(c))
+                })
+            {
+                end = i;
+                break;
+            }
+        }
         &s[..end]
     }
 }
@@ -546,6 +561,19 @@ mod tests {
         );
         let once = escape_chrome(b"x\x1by");
         assert_eq!(escape_chrome(once.as_bytes()), once);
+    }
+
+    #[test]
+    fn truncation_never_splits_escape_tokens() {
+        // pre-escaped name: every cut inside `\x1B` backs off to before it
+        for max in 2..=4 {
+            assert_eq!(truncated(" a\\x1B.txt", max + 1), " a");
+        }
+        assert_eq!(truncated(" a\\x1B.txt", 6), " a\\x1B");
+        // raw path: escaped first, then cut
+        assert_eq!(truncated(&escape_chrome(b"ab\x1b"), 4), "ab");
+        // not an escape token: ordinary byte cut
+        assert_eq!(truncated("a\\xZZ", 3), "a\\x");
     }
 
     #[test]

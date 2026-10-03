@@ -95,7 +95,7 @@ fn parse_args() -> Result<Args, String> {
         if f.is_dir() {
             return Err(format!(
                 "{}: is a directory (use -w to open a workspace)",
-                f.display()
+                chrome_path(f)
             ));
         }
     }
@@ -157,7 +157,7 @@ fn main() -> ExitCode {
                     buffers.push(b)
                 }
                 Err(e) => {
-                    eprintln!("teddy: {}: {e}", f.display());
+                    eprintln!("teddy: {}: {e}", chrome_path(f));
                     return ExitCode::FAILURE;
                 }
             }

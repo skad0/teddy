@@ -136,3 +136,6 @@ shown as a notice. Oversized or malformed normal frames are rejected.
 The existing messages remain unchanged: `REGISTER_COMMAND`, `COMMAND_INVOKE`,
 `VIEWPORT`, `SPANS`, `WIDGET`, `EDIT_TX`, `EDIT_RESULT`, and `STATUS` retain
 their v1 meanings and payloads documented by the source implementation.
+The `VIEWPORT` name field is the buffer's display name: the file's basename
+with control, C1, and invalid UTF-8 bytes escaped as literal `\xNN` (the same
+text shown in the tab), not the raw path bytes.
