@@ -137,11 +137,19 @@ mod tests {
         }
     }
 
-    fn render(w: &Widget, sel: usize, input: &str, h: usize) -> (Vec<String>, Vec<Option<(usize, usize)>>) {
+    fn render(
+        w: &Widget,
+        sel: usize,
+        input: &str,
+        h: usize,
+    ) -> (Vec<String>, Vec<Option<(usize, usize)>>) {
         let mut rows = vec![b"stale".to_vec(); h];
         let mut row_sel = vec![Some((0, 1)); h];
         draw(w, sel, input, &mut rows, &mut row_sel);
-        let text = rows.into_iter().map(|r| String::from_utf8(r).unwrap()).collect();
+        let text = rows
+            .into_iter()
+            .map(|r| String::from_utf8(r).unwrap())
+            .collect();
         (text, row_sel)
     }
 
@@ -192,7 +200,12 @@ mod tests {
 
     #[test]
     fn tree_indents_marks_and_scrolls_to_selection() {
-        let t = w(W_TREE, 0, &["src", "main.rs", "docs", "x"], &[(0, 3), (1, 0), (0, 1), (0, 0)]);
+        let t = w(
+            W_TREE,
+            0,
+            &["src", "main.rs", "docs", "x"],
+            &[(0, 3), (1, 0), (0, 1), (0, 0)],
+        );
         let (rows, sel) = render(&t, 0, "", 4);
         assert_eq!(rows, vec!["▾ src", "    main.rs", "▸ docs", "  x"]);
         assert_eq!(sel[0], Some((0, "▾ src".len())));
@@ -204,7 +217,12 @@ mod tests {
 
     #[test]
     fn table_aligns_columns_and_keeps_header() {
-        let t = w(W_TABLE, 2, &["name", "size", "a", "1", "longer", "22", "c", "3"], &[]);
+        let t = w(
+            W_TABLE,
+            2,
+            &["name", "size", "a", "1", "longer", "22", "c", "3"],
+            &[],
+        );
         assert_eq!(selectable(&t), 3);
         let (rows, sel) = render(&t, 2, "", 3);
         assert_eq!(rows, vec!["name    size", "longer  22", "c       3"]);

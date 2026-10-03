@@ -700,6 +700,7 @@ mod tests {
             row_sel: &[],
             row_spans: &[],
             left_col: 0,
+            plain_from: usize::MAX,
             cursor_screen: (0, 0),
             status_left: &status,
             status_right: "",

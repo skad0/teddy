@@ -1072,8 +1072,13 @@ impl Plugin {
 
     fn service_process(&mut self) {
         if !self.alive && self.state == PluginState::Stopping {
-            if self.child.try_wait().ok().flatten().is_some() {
+            if let Some(status) = self.child.try_wait().ok().flatten() {
                 if self.retry_after_reap {
+                    let exited = format!("exited: {status}");
+                    self.failure = Some(match self.failure.take() {
+                        Some(reason) => format!("{reason}; {exited}"),
+                        None => exited,
+                    });
                     self.retry_after_reap = false;
                     self.schedule_retry();
                 } else {
@@ -1129,12 +1134,14 @@ impl Plugin {
                     if !self.hello_ok {
                         continue;
                     }
-                    let text = sanitize_stderr(&buf[..n]);
-                    if !text.is_empty() {
+                    for line in buf[..n].split(|&b| b == b'\n').filter(|l| !l.is_empty()) {
                         if self.stderr_tail.len() == NOTICE_CAP {
                             self.stderr_tail.remove(0);
                         }
-                        self.stderr_tail.push(text.clone());
+                        self.stderr_tail.push(sanitize_stderr(line));
+                    }
+                    let text = sanitize_stderr(&buf[..n]);
+                    if !text.is_empty() {
                         if self.notices.len() == NOTICE_CAP {
                             self.notices.remove(0);
                         }
@@ -1398,7 +1405,13 @@ mod tests {
     #[test]
     fn stale_widget_revision_is_dropped() {
         let mut widgets = HashMap::new();
-        assert!(update_widget(&mut widgets, 1, 2, 0, &widget_payload(&["new"])));
+        assert!(update_widget(
+            &mut widgets,
+            1,
+            2,
+            0,
+            &widget_payload(&["new"])
+        ));
         assert_eq!(widgets.get(&1).unwrap().items, vec!["new".to_string()]);
 
         assert!(update_widget(
