@@ -799,7 +799,7 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
             }
             Err(e) => {
                 status_msg.clear();
-                let _ = write!(status_msg, "{}: plugin failed: {e}", path.display());
+                let _ = write!(status_msg, "{}: plugin failed: {e}", chrome_path(&path));
                 dirty = true;
             }
         }
@@ -1591,7 +1591,7 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                                         mode = Mode::Edit;
                                     }
                                     Err(e) => {
-                                        let _ = write!(status_msg, "{}: {e}", path.display());
+                                        let _ = write!(status_msg, "{}: {e}", chrome_path(&path));
                                     }
                                 }
                             }
@@ -2598,6 +2598,12 @@ fn clamp_left(buf: &mut Buffer, vcol: usize, cols: usize) {
     if vcol >= buf.left_col + cols {
         buf.left_col = vcol - cols + 1;
     }
+}
+
+/// Path for the statusline: raw bytes, control/invalid ones as `\xNN`.
+fn chrome_path(path: &Path) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    render::escape_chrome(path.as_os_str().as_bytes())
 }
 
 fn format_status(buf: &mut Buffer, left: &mut String, right: &mut String) {

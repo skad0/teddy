@@ -136,6 +136,27 @@ fn next_token(bytes: &[u8], cell: usize) -> Token {
     }
 }
 
+/// Chrome text (tab names, statusline): control, C1 and invalid bytes become
+/// literal `\xNN` exactly as in buffer rows, but with no SGR (chrome is
+/// already styled) and tabs escaped too. Idempotent on its own output.
+pub fn escape_chrome(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match next_token(&bytes[i..], 0) {
+            Token::Char(n, _) if bytes[i] != b'\t' => {
+                s.push_str(std::str::from_utf8(&bytes[i..i + n]).unwrap_or("?"));
+                i += n;
+            }
+            _ => {
+                s.push_str(&format!("\\x{:02X}", bytes[i]));
+                i += 1;
+            }
+        }
+    }
+    s
+}
+
 /// Visual column of byte offset `upto` within a line.
 pub fn visual_col(bytes: &[u8], upto: usize) -> usize {
     let mut cell = 0;
@@ -314,6 +335,7 @@ pub fn paint(f: &mut FrameBuf, cache: &mut RenderCache, v: &View) {
         b.extend_from_slice(THEME.chrome_on);
         let mut col = 0usize;
         for (i, (name, modified)) in v.tabs.iter().enumerate() {
+            let name = escape_chrome(name.as_bytes());
             let star = if *modified { "*" } else { "" };
             let label_len = name.len() + star.len() + 4;
             if col + label_len > v.cols as usize {
@@ -379,9 +401,11 @@ pub fn paint(f: &mut FrameBuf, cache: &mut RenderCache, v: &View) {
         let _ = write!(b, "\x1b[{};1H", v.rows);
         b.extend_from_slice(THEME.chrome_on);
         let w = v.cols as usize;
-        let left = truncated(v.status_left, w);
+        let status_left = escape_chrome(v.status_left.as_bytes());
+        let status_right = escape_chrome(v.status_right.as_bytes());
+        let left = truncated(&status_left, w);
         b.extend_from_slice(left.as_bytes());
-        let right = truncated(v.status_right, w.saturating_sub(left.len()));
+        let right = truncated(&status_right, w.saturating_sub(left.len()));
         pad(b, w.saturating_sub(left.len() + right.len()));
         b.extend_from_slice(right.as_bytes());
         b.extend_from_slice(THEME.chrome_off);
@@ -512,6 +536,16 @@ mod tests {
         assert_eq!(byte_at_col(line, 9), 3);
         assert_eq!(byte_at_col(line, 4), 1); // middle of tab -> tab start
         assert_eq!(byte_at_col(line, 99), line.len());
+    }
+
+    #[test]
+    fn chrome_escapes_control_c1_and_invalid_bytes() {
+        assert_eq!(
+            escape_chrome(b"a\x1b[2J\t\x07\xc2\x9b\xff\xc3\xa9.rs"),
+            "a\\x1B[2J\\x09\\x07\\xC2\\x9B\\xFF\u{e9}.rs"
+        );
+        let once = escape_chrome(b"x\x1by");
+        assert_eq!(escape_chrome(once.as_bytes()), once);
     }
 
     #[test]
