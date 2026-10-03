@@ -6,9 +6,11 @@ Semantic Versioning.
 
 ## [Unreleased]
 
-### Changed
+### Added
 
-- No unreleased changes yet.
+- Panics write a crash log with a backtrace to
+  `$XDG_STATE_HOME/teddy/crash-<pid>.log` (default `~/.local/state`) and print
+  its path after the terminal is restored (spec §20).
 
 ## [0.2.0]
 
