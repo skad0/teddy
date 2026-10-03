@@ -136,11 +136,31 @@ fn main() -> ExitCode {
         }
     }
 
-    // panic path per spec §20: restore terminal before the default report
+    // panic path per spec §20: restore terminal (also leaves the alternate
+    // screen), write the crash log, then print its path as the last line
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         term::restore();
+        // ponytail: release builds are stripped, so this backtrace is addresses only
+        let body = format!(
+            "teddy {}\n{info}\n\nbacktrace:\n{}\n",
+            env!("CARGO_PKG_VERSION"),
+            std::backtrace::Backtrace::force_capture()
+        );
+        let written = crash_log_path(
+            std::env::var_os("XDG_STATE_HOME").map(PathBuf::from),
+            std::env::var_os("HOME").map(PathBuf::from),
+            std::process::id(),
+        )
+        .ok_or_else(|| std::io::Error::other("neither XDG_STATE_HOME nor HOME is set"))
+        .and_then(|path| write_crash_log(&path, &body).map(|()| path));
         default_hook(info);
+        // writeln, not eprintln: a panic inside the hook would abort
+        let mut err = std::io::stderr();
+        let _ = match written {
+            Ok(path) => writeln!(err, "teddy: crash log written to {}", path.display()),
+            Err(e) => writeln!(err, "teddy: could not write crash log: {e}"),
+        };
     }));
 
     let guard = match term::enter() {
@@ -165,6 +185,40 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// `$XDG_STATE_HOME/teddy/crash-<pid>.log`, falling back to `~/.local/state`.
+/// Relative values are ignored (XDG requires absolute paths), so panic data
+/// never lands in the launch directory.
+fn crash_log_path(state_home: Option<PathBuf>, home: Option<PathBuf>, pid: u32) -> Option<PathBuf> {
+    let base = state_home.filter(|p| p.is_absolute()).or_else(|| {
+        home.filter(|h| h.is_absolute())
+            .map(|h| h.join(".local/state"))
+    })?;
+    Some(base.join("teddy").join(format!("crash-{pid}.log")))
+}
+
+/// Owner-only, since a panic message may quote buffer contents.
+fn write_crash_log(path: &Path, body: &str) -> std::io::Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    if let Some(dir) = path.parent() {
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)?;
+    }
+    // a stale log from a reused pid is replaced, never reopened: create_new
+    // guarantees 0600 and refuses to follow a symlink planted at the path
+    match std::fs::remove_file(path) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+        _ => {}
+    }
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)?
+        .write_all(body.as_bytes())
 }
 
 /// Resolve the first-party plugin as an executable sibling, without shelling
@@ -474,8 +528,9 @@ fn sweep_plugin_edges(
 #[cfg(test)]
 mod startup_tests {
     use super::{
-        bundled_highlighter_path, bundled_spans_allowed, configured_highlighter,
+        bundled_highlighter_path, bundled_spans_allowed, configured_highlighter, crash_log_path,
         dispatch_launcher_request, durability_warning, manager_executable, spans_match,
+        write_crash_log,
     };
     use crate::plugin;
     use crate::plugin_registry::{
@@ -483,6 +538,41 @@ mod startup_tests {
         SaveOutcome as RegistrySaveOutcome,
     };
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn crash_log_prefers_xdg_state_then_home() {
+        let p = |s: &str| Some(PathBuf::from(s));
+        assert_eq!(
+            crash_log_path(p("/s"), p("/h"), 7),
+            p("/s/teddy/crash-7.log")
+        );
+        assert_eq!(
+            crash_log_path(p(""), p("/h"), 7),
+            p("/h/.local/state/teddy/crash-7.log")
+        );
+        assert_eq!(
+            crash_log_path(p("rel"), p("/h"), 7),
+            p("/h/.local/state/teddy/crash-7.log")
+        );
+        assert_eq!(crash_log_path(None, p("rel"), 7), None);
+        assert_eq!(crash_log_path(None, None, 7), None);
+    }
+
+    #[test]
+    fn crash_log_is_owner_only_and_overwritten() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("teddy-crash-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let path = crash_log_path(Some(root.clone()), None, 1).unwrap();
+        write_crash_log(&path, "first, longer body").unwrap();
+        write_crash_log(&path, "second").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "second");
+        // umask may only narrow the modes; group/other must never get access
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o077;
+        assert_eq!(mode(&path), 0);
+        assert_eq!(mode(path.parent().unwrap()), 0);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     #[test]
     fn bundled_highlighter_is_a_sibling_executable() {
