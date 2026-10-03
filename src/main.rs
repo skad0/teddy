@@ -7,6 +7,7 @@ mod input;
 #[allow(dead_code)] // wrapped into S8 plugin executables
 mod lex;
 mod lines;
+mod pane;
 mod picker;
 mod plugin;
 mod plugin_registry;
@@ -1145,7 +1146,7 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
             let authorized =
                 manager_index == Some(source_index) && plugins[source_index].manager_capable();
             if !authorized {
-                plugins[source_index].stop_for_protocol();
+                plugins[source_index].fail_protocol("unauthorized launcher request");
                 continue;
             }
             let request = match plugin::decode_launcher_request(&frame) {

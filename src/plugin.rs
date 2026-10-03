@@ -24,6 +24,8 @@ pub const SPANS: u16 = 10;
 pub const LAUNCHER_REQUEST: u16 = 11;
 pub const LAUNCHER_RESPONSE: u16 = 12;
 pub const LAUNCHER_EVENT: u16 = 13;
+/// Core → plugin structured widget input other than item selection.
+pub const WIDGET_INPUT: u16 = 14;
 
 const HEADER_LEN: usize = 28;
 // Per-tick pipe budget: a flooding plugin yields to input/paint and is polled again next tick.
@@ -651,49 +653,116 @@ fn take8(bytes: &[u8]) -> Result<[u8; 8], ProtoError> {
     bytes.try_into().map_err(|_| ProtoError::Malformed)
 }
 
+/// Core widget kinds (spec §14.3). The plugin supplies data only; layout,
+/// drawing, and input stay in the core.
+pub const W_LIST: u8 = 1;
+pub const W_TREE: u8 = 2;
+pub const W_TABLE: u8 = 3;
+pub const W_TEXT: u8 = 4;
+pub const W_LOG: u8 = 5;
+pub const W_PROMPT: u8 = 6;
+pub const W_ACTIONS: u8 = 7;
+
+/// `WIDGET` frame flag: this widget is the Ctrl+T explorer/action surface.
+pub const WIDGET_FLAG_EXPLORER: u16 = 0x1;
+/// Tree row flags.
+pub const TREE_HAS_CHILDREN: u8 = 0x1;
+pub const TREE_EXPANDED: u8 = 0x2;
+const TREE_MAX_DEPTH: u8 = 32;
+
+/// `WIDGET_INPUT` (type 14) payload tags. Item selection keeps using
+/// `WIDGET_EVENT` with its v1 `u32` payload; the other structured inputs get
+/// their own message type so v1 plugins can never misread them as a select.
+pub const IN_BUTTON: u8 = 1;
+pub const IN_SEARCH: u8 = 2;
+pub const IN_PROMPT: u8 = 3;
+pub const IN_EXPAND: u8 = 4;
+pub const IN_COLLAPSE: u8 = 5;
+
 #[allow(dead_code)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Widget {
     pub kind: u8,
+    /// Set from `WIDGET_FLAG_EXPLORER` on the carrying frame.
+    pub explorer: bool,
+    /// Table column count; the first `cols` items are the header row.
+    pub cols: u8,
     pub items: Vec<String>,
+    /// Tree only: `(depth, flags)` per item.
+    pub tree: Vec<(u8, u8)>,
     pub revision: u64,
 }
 
+/// Payload: `kind u8`, `[cols u8 if table]`, `count u16`, then per item
+/// `[depth u8, flags u8 if tree]` and a `u16`-length UTF-8 string.
 #[allow(dead_code)]
 pub fn parse_widget(payload: &[u8]) -> Option<Widget> {
-    if payload.len() < 3 {
+    let (&kind, mut rest) = payload.split_first()?;
+    if !(W_LIST..=W_ACTIONS).contains(&kind) {
         return None;
     }
-
-    let kind = payload[0];
-    let count = u16::from_le_bytes(payload[1..3].try_into().ok()?) as usize;
-    let mut at = 3;
-    let mut items = Vec::with_capacity(count);
+    let mut cols = 0;
+    if kind == W_TABLE {
+        let (&c, r) = rest.split_first()?;
+        cols = c;
+        rest = r;
+    }
+    let count = u16::from_le_bytes(rest.get(..2)?.try_into().ok()?) as usize;
+    let mut at = 2;
+    let mut items = Vec::with_capacity(count.min(rest.len()));
+    let mut tree = Vec::new();
 
     for _ in 0..count {
-        if at + 2 > payload.len() {
-            return None;
+        if kind == W_TREE {
+            let meta = rest.get(at..at + 2)?;
+            if meta[0] > TREE_MAX_DEPTH {
+                return None;
+            }
+            tree.push((meta[0], meta[1]));
+            at += 2;
         }
-        let len = u16::from_le_bytes(payload[at..at + 2].try_into().ok()?) as usize;
+        let len = u16::from_le_bytes(rest.get(at..at + 2)?.try_into().ok()?) as usize;
         at += 2;
-        if at + len > payload.len() {
-            return None;
-        }
-        let item = std::str::from_utf8(&payload[at..at + len])
-            .ok()?
-            .to_string();
-        items.push(sanitize_control_bytes(item));
+        let item = std::str::from_utf8(rest.get(at..at + len)?).ok()?;
+        items.push(sanitize_control_bytes(item.to_string()));
         at += len;
     }
 
-    if at != payload.len() {
+    let shape_ok = match kind {
+        W_TABLE => cols > 0 && count >= cols as usize && count % cols as usize == 0,
+        W_PROMPT => count == 1,
+        _ => true,
+    };
+    if at != rest.len() || !shape_ok {
         return None;
     }
 
     Some(Widget {
         kind,
+        cols,
         items,
-        revision: 0,
+        tree,
+        ..Widget::default()
     })
+}
+
+/// Inverse of `parse_widget`, for plugins, tests, and the dev JSON bridge.
+#[allow(dead_code)]
+pub fn encode_widget(w: &Widget) -> Vec<u8> {
+    let mut out = vec![w.kind];
+    if w.kind == W_TABLE {
+        out.push(w.cols);
+    }
+    out.extend_from_slice(&(w.items.len() as u16).to_le_bytes());
+    for (i, item) in w.items.iter().enumerate() {
+        if w.kind == W_TREE {
+            let (depth, flags) = w.tree.get(i).copied().unwrap_or((0, 0));
+            out.extend_from_slice(&[depth, flags]);
+        }
+        out.extend_from_slice(&(item.len() as u16).to_le_bytes());
+        out.extend_from_slice(item.as_bytes());
+    }
+    out
 }
 
 pub fn parse_spans(payload: &[u8]) -> Option<Vec<(u16, Vec<(u16, u16, u8)>)>> {
@@ -751,6 +820,11 @@ pub struct Plugin {
     pub commands: Vec<String>,
     pub widgets: HashMap<u64, Widget>,
     pub notices: Vec<String>,
+    /// Why the slot last stopped unexpectedly; the core takes it for the
+    /// jobs pane (spec §14.4). Survives `clear_contributions`.
+    pub failure: Option<String>,
+    /// Rolling post-HELLO stderr lines, kept across cleanup as failure detail.
+    pub stderr_tail: Vec<String>,
     pub wants_viewport: bool,
     hello_ok: bool,
     pub source: PluginSource,
@@ -809,6 +883,8 @@ impl Plugin {
             commands: Vec::new(),
             widgets: HashMap::new(),
             notices: Vec::new(),
+            failure: None,
+            stderr_tail: Vec::new(),
             wants_viewport: false,
             hello_ok: false,
             source,
@@ -833,7 +909,7 @@ impl Plugin {
 
     pub fn send(&mut self, f: &Frame) {
         if send_frame_to(&mut self.stdin, f).is_err() {
-            self.fail_unexpected();
+            self.fail_unexpected("write to plugin failed");
         }
     }
 
@@ -859,7 +935,7 @@ impl Plugin {
             let read_cap = (PUMP_READ_BUDGET - read_total).min(buf.len());
             match self.stdout.read(&mut buf[..read_cap]) {
                 Ok(0) => {
-                    self.fail_unexpected();
+                    self.fail_unexpected("plugin closed stdout");
                     break;
                 }
                 Ok(n) => {
@@ -869,7 +945,7 @@ impl Plugin {
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                 Err(_) => {
-                    self.fail_unexpected();
+                    self.fail_unexpected("read from plugin failed");
                     break;
                 }
             }
@@ -883,7 +959,7 @@ impl Plugin {
                                 || u32::from_le_bytes(frame.payload[0..4].try_into().unwrap())
                                     != PROTO_VERSION
                             {
-                                self.stop_child();
+                                self.fail_protocol("bad HELLO");
                                 break;
                             }
                             self.hello_ok = true;
@@ -898,7 +974,7 @@ impl Plugin {
                     }
                     Ok(None) => break,
                     Err(_) => {
-                        self.stop_child();
+                        self.fail_protocol("malformed frame");
                         break;
                     }
                 }
@@ -1009,16 +1085,18 @@ impl Plugin {
         if !self.alive {
             return;
         }
-        if self.child.try_wait().ok().flatten().is_some() {
+        if let Some(status) = self.child.try_wait().ok().flatten() {
+            self.failure = Some(format!("exited: {status}"));
             self.alive = false;
             self.clear_contributions();
             self.schedule_retry();
         } else if !self.hello_ok && Instant::now() >= self.hello_deadline {
-            self.fail_unexpected();
+            self.fail_unexpected("no HELLO within 2s");
         }
     }
 
-    fn fail_unexpected(&mut self) {
+    fn fail_unexpected(&mut self, reason: &str) {
+        self.failure = Some(reason.to_owned());
         self.alive = false;
         self.state = PluginState::Stopping;
         self.retry_after_reap = true;
@@ -1053,6 +1131,10 @@ impl Plugin {
                     }
                     let text = sanitize_stderr(&buf[..n]);
                     if !text.is_empty() {
+                        if self.stderr_tail.len() == NOTICE_CAP {
+                            self.stderr_tail.remove(0);
+                        }
+                        self.stderr_tail.push(text.clone());
                         if self.notices.len() == NOTICE_CAP {
                             self.notices.remove(0);
                         }
@@ -1073,7 +1155,7 @@ impl Plugin {
                 if let Ok(command) = String::from_utf8(frame.payload) {
                     self.commands.push(command);
                 } else {
-                    self.stop_child();
+                    self.fail_protocol("non-UTF-8 command");
                 }
             }
             WIDGET => {
@@ -1081,9 +1163,10 @@ impl Plugin {
                     &mut self.widgets,
                     frame.resource_id,
                     frame.resource_revision,
+                    frame.flags,
                     &frame.payload,
                 ) {
-                    self.stop_child();
+                    self.fail_protocol("invalid widget frame");
                 }
             }
             STATUS => {
@@ -1093,11 +1176,16 @@ impl Plugin {
                     }
                     self.notices.push(sanitize_control_bytes(notice));
                 } else {
-                    self.stop_child();
+                    self.fail_protocol("non-UTF-8 status");
                 }
             }
             _ => out.push(frame),
         }
+    }
+
+    pub fn fail_protocol(&mut self, reason: &str) {
+        self.failure = Some(format!("protocol violation: {reason}"));
+        self.stop_child();
     }
 
     fn stop_child(&mut self) {
@@ -1172,6 +1260,7 @@ fn update_widget(
     widgets: &mut HashMap<u64, Widget>,
     id: u64,
     revision: u64,
+    flags: u16,
     payload: &[u8],
 ) -> bool {
     let Some(mut widget) = parse_widget(payload) else {
@@ -1179,6 +1268,7 @@ fn update_widget(
     };
     if widgets.get(&id).map_or(true, |old| revision > old.revision) {
         widget.revision = revision;
+        widget.explorer = flags & WIDGET_FLAG_EXPLORER != 0;
         widgets.insert(id, widget);
     }
     true
@@ -1308,13 +1398,14 @@ mod tests {
     #[test]
     fn stale_widget_revision_is_dropped() {
         let mut widgets = HashMap::new();
-        assert!(update_widget(&mut widgets, 1, 2, &widget_payload(&["new"])));
+        assert!(update_widget(&mut widgets, 1, 2, 0, &widget_payload(&["new"])));
         assert_eq!(widgets.get(&1).unwrap().items, vec!["new".to_string()]);
 
         assert!(update_widget(
             &mut widgets,
             1,
             1,
+            0,
             &widget_payload(&["stale"])
         ));
         assert_eq!(widgets.get(&1).unwrap().revision, 2);
@@ -1324,6 +1415,7 @@ mod tests {
             &mut widgets,
             1,
             3,
+            0,
             &widget_payload(&["newer"])
         ));
         assert_eq!(widgets.get(&1).unwrap().revision, 3);
@@ -1528,9 +1620,8 @@ mod tests {
         widgets.insert(
             1,
             Widget {
-                kind: 0,
-                items: Vec::new(),
                 revision: 1,
+                ..Widget::default()
             },
         );
         assert_eq!(widgets.len(), 1);
