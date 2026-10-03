@@ -475,6 +475,9 @@ fn explorer_focused(mode: Mode, plugins: &[plugin::Plugin]) -> bool {
 }
 
 const JOBS_CAP: usize = 200;
+/// Prompt/search text bound; far below `MAX_PAYLOAD` so a paste can't
+/// overflow a `WIDGET_INPUT` frame.
+const WIDGET_INPUT_CAP: usize = 4096;
 
 fn jobs_push(jobs: &mut plugin::Widget, line: String) {
     if jobs.items.len() == JOBS_CAP {
@@ -1071,15 +1074,6 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
             if !plugin_ready.get(i).copied().unwrap_or(false) {
                 continue;
             }
-            // the Ctrl+T explorer widget never auto-opens or triggers auto-open
-            let before_count = plugins[i].widgets.values().filter(|w| !w.explorer).count();
-            let before_max_revision = plugins[i]
-                .widgets
-                .values()
-                .filter(|w| !w.explorer)
-                .map(|w| w.revision)
-                .max()
-                .unwrap_or(0);
             let before_wants_viewport = plugins[i].wants_viewport;
             let frames = plugins[i].pump();
             let mut plugin_dirty = !frames.is_empty();
@@ -1136,27 +1130,19 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                     _ => {}
                 }
             }
-            if plugins[i].widgets.values().any(|w| w.explorer) {
-                plugin_dirty = true; // explorer re-sends repaint the bottom slot
-            }
-            if plugins[i].widgets.values().filter(|w| !w.explorer).count() != before_count
-                || plugins[i]
-                    .widgets
-                    .values()
-                    .any(|w| !w.explorer && w.revision > before_max_revision)
-            {
+            let changed = std::mem::take(&mut plugins[i].changed_widgets);
+            if !changed.is_empty() {
                 plugin_dirty = true;
-                if mode == Mode::Edit {
-                    if let Some((&widget, _)) = plugins[i]
-                        .widgets
-                        .iter()
-                        .filter(|(_, w)| !w.explorer)
-                        .max_by_key(|(_, w)| w.revision)
-                    {
-                        widget_sel = 0;
-                        widget_input.clear();
-                        mode = Mode::PluginWidget { plugin: i, widget };
-                    }
+                // the newest changed widget auto-opens; the Ctrl+T explorer never does
+                let opened = changed
+                    .iter()
+                    .rev()
+                    .copied()
+                    .find(|id| plugins[i].widgets.get(id).is_some_and(|w| !w.explorer));
+                if let (Mode::Edit, Some(widget)) = (mode, opened) {
+                    widget_sel = 0;
+                    widget_input.clear();
+                    mode = Mode::PluginWidget { plugin: i, widget };
                 }
             }
             if !plugins[i].alive {
@@ -1189,6 +1175,11 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
 
         for p in &mut plugins {
             if let Some(reason) = p.failure.take() {
+                // a dead child's last words are still in the pipe; read them
+                // before reporting (its fd is no longer polled)
+                p.drain_stderr(16 * 1024);
+                status_msg.clear();
+                let _ = write!(status_msg, "{}: plugin stopped (details: jobs)", p.name);
                 jobs_push(&mut jobs, format!("{}: {reason}", p.name));
                 for line in p.stderr_tail.drain(..) {
                     jobs_push(&mut jobs, format!("{}: {line}", p.name));
@@ -1818,6 +1809,7 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                             }
                             _ => {}
                         },
+                        Key::Char(_) if widget_input.len() >= WIDGET_INPUT_CAP => {}
                         Key::Char(c) if kind == plugin::W_PROMPT || searchable => {
                             widget_input.push(c);
                             if searchable {
@@ -2092,8 +2084,9 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
 
         if dirty && !term::poll_stdin(&[], &mut idle_ready, 0)? {
             // fixed bottom slot (spec §1 layout): explorer when focused, else jobs
-            let explorer = explorer_focused(mode, &plugins);
-            let slot = bottom_slot_rows(editor_area, jobs_open || explorer);
+            let slot = bottom_slot_rows(editor_area, jobs_open || explorer_focused(mode, &plugins));
+            // too small for a slot: the explorer draws as the center overlay
+            let explorer = explorer_focused(mode, &plugins) && slot > 0;
             let editor_rows = (editor_area - slot) as u64;
             let buf = &mut buffers[active];
             let cursor_screen = build_view(

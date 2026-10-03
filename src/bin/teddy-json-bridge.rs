@@ -200,8 +200,19 @@ fn json_to_widget(v: &Json) -> Result<Widget, &'static str> {
             .collect::<Result<_, _>>()?,
         Some(_) => return Err("tree must be an array"),
     };
+    let kind = byte(get("kind"))?;
+    // encode_widget pads/truncates tree metadata; refuse instead of mutating
+    if tree.len()
+        != if kind == plugin::W_TREE {
+            items.len()
+        } else {
+            0
+        }
+    {
+        return Err("tree needs one [depth, flags] per item, and only for kind 2");
+    }
     let w = Widget {
-        kind: byte(get("kind"))?,
+        kind,
         cols: byte(get("cols"))?,
         items,
         tree,
@@ -463,6 +474,14 @@ mod tests {
         // shapes the core would reject never leave the bridge
         assert!(json_to_frame(r#"{"type":4,"widget":{"kind":3,"cols":2,"items":["a"]}}"#).is_err());
         assert!(json_to_frame(r#"{"type":4,"widget":{"kind":9}}"#).is_err());
+        assert!(json_to_frame(
+            r#"{"type":4,"widget":{"kind":2,"items":["a","b"],"tree":[[0,0]]}}"#
+        )
+        .is_err());
+        assert!(
+            json_to_frame(r#"{"type":4,"widget":{"kind":1,"items":["a"],"tree":[[0,0]]}}"#)
+                .is_err()
+        );
     }
 
     #[test]

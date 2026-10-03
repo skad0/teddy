@@ -36,6 +36,8 @@ pub fn draw(
     if h == 0 {
         return;
     }
+    // the widget may have shrunk since the cursor last moved
+    let sel = sel.min(selectable(w).saturating_sub(1));
     let highlight = |rows: &mut [Vec<u8>], row_sel: &mut [Option<(usize, usize)>], r: usize| {
         row_sel[r] = Some((0, rows[r].len()));
     };
@@ -184,6 +186,9 @@ mod tests {
         let tree = encode_widget(&w(W_TREE, 0, &["x"], &[(0, 0)]));
         assert!(parse_widget(&tree[..4]).is_none());
         assert!(parse_widget(&encode_widget(&w(W_TREE, 0, &["x"], &[(33, 0)]))).is_none());
+        // tree: unknown flag bits, expanded without children
+        assert!(parse_widget(&encode_widget(&w(W_TREE, 0, &["x"], &[(0, 4)]))).is_none());
+        assert!(parse_widget(&encode_widget(&w(W_TREE, 0, &["x"], &[(0, 2)]))).is_none());
         // trailing bytes
         let mut list = encode_widget(&w(W_LIST, 0, &["a"], &[]));
         list.push(0);
@@ -211,6 +216,10 @@ mod tests {
         assert_eq!(sel[0], Some((0, "▾ src".len())));
         assert!(sel[1..].iter().all(Option::is_none));
         let (rows, sel) = render(&t, 3, "", 2);
+        assert_eq!(rows, vec!["▸ docs", "  x"]);
+        assert_eq!(sel, vec![None, Some((0, 3))]);
+        // a stale cursor past a shrunken widget still lands on its last row
+        let (rows, sel) = render(&t, 99, "", 2);
         assert_eq!(rows, vec!["▸ docs", "  x"]);
         assert_eq!(sel, vec![None, Some((0, 3))]);
     }

@@ -93,10 +93,10 @@ fn main() -> io::Result<()> {
                     }
                 }
                 WIDGET_EVENT if frame.resource_id == EXPLORER => {
-                    let index = frame
-                        .payload
-                        .get(0..4)
-                        .map(|b| u32::from_le_bytes(b.try_into().unwrap()));
+                    // stale revision or wrong shape: the index may name another row
+                    let index = (frame.resource_revision == explorer_revision
+                        && frame.payload.len() == 4)
+                        .then(|| u32::from_le_bytes(frame.payload[..].try_into().unwrap()));
                     if let Some((_, _, name)) =
                         index.and_then(|i| explorer_rows(&expanded).get(i as usize).copied())
                     {

@@ -47,8 +47,11 @@ unauthorized launcher requests stop the offending slot.
 `WIDGET` (4) carries data only; the core owns layout, drawing, and keys. The
 payload is `kind: u8`, then `cols: u8` for tables only, then `count: u16`,
 then per item (`depth: u8`, `flags: u8` for trees only) and a `u16`-length
-UTF-8 string. Every string is control-sanitized. Unknown kinds, wrong shapes,
-and trailing bytes are protocol violations that stop the slot.
+UTF-8 string. Every string is control-sanitized. Each of the following is a
+protocol violation that stops the slot: an unknown kind, a wrong shape,
+trailing bytes, an unknown `WIDGET` frame flag, an unknown tree flag bit, or
+a tree row flagged expanded without children. Core-side prompt and search text
+is capped at 4 KiB.
 
 | Kind | Name | Items | Keys |
 |---:|---|---|---|

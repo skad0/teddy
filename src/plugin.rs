@@ -716,7 +716,12 @@ pub fn parse_widget(payload: &[u8]) -> Option<Widget> {
     for _ in 0..count {
         if kind == W_TREE {
             let meta = rest.get(at..at + 2)?;
-            if meta[0] > TREE_MAX_DEPTH {
+            let (depth, flags) = (meta[0], meta[1]);
+            let known = TREE_HAS_CHILDREN | TREE_EXPANDED;
+            if depth > TREE_MAX_DEPTH
+                || flags & !known != 0
+                || flags & (TREE_HAS_CHILDREN | TREE_EXPANDED) == TREE_EXPANDED
+            {
                 return None;
             }
             tree.push((meta[0], meta[1]));
@@ -820,6 +825,8 @@ pub struct Plugin {
     pub alive: bool,
     pub commands: Vec<String>,
     pub widgets: HashMap<u64, Widget>,
+    /// Widget ids accepted since the core last drained this (repaint/auto-open).
+    pub changed_widgets: Vec<u64>,
     pub notices: Vec<String>,
     /// Why the slot last stopped unexpectedly; the core takes it for the
     /// jobs pane (spec §14.4). Survives `clear_contributions`.
@@ -883,6 +890,7 @@ impl Plugin {
             alive: true,
             commands: Vec::new(),
             widgets: HashMap::new(),
+            changed_widgets: Vec::new(),
             notices: Vec::new(),
             failure: None,
             stderr_tail: Vec::new(),
@@ -1028,6 +1036,7 @@ impl Plugin {
         self.commands.clear();
         self.widgets.clear();
         self.notices.clear();
+        self.stderr_tail.clear();
         self.wants_viewport = false;
         self.hello_ok = false;
         self.state = PluginState::Starting;
@@ -1067,6 +1076,7 @@ impl Plugin {
     pub fn clear_contributions(&mut self) {
         self.commands.clear();
         self.widgets.clear();
+        self.changed_widgets.clear();
         self.notices.clear();
         self.wants_viewport = false;
     }
@@ -1166,17 +1176,17 @@ impl Plugin {
                     self.fail_protocol("non-UTF-8 command");
                 }
             }
-            WIDGET => {
-                if !update_widget(
-                    &mut self.widgets,
-                    frame.resource_id,
-                    frame.resource_revision,
-                    frame.flags,
-                    &frame.payload,
-                ) {
-                    self.fail_protocol("invalid widget frame");
-                }
-            }
+            WIDGET => match update_widget(
+                &mut self.widgets,
+                frame.resource_id,
+                frame.resource_revision,
+                frame.flags,
+                &frame.payload,
+            ) {
+                None => self.fail_protocol("invalid widget frame"),
+                Some(true) => self.changed_widgets.push(frame.resource_id),
+                Some(false) => {}
+            },
             STATUS => {
                 if let Ok(notice) = String::from_utf8(frame.payload) {
                     if self.notices.len() == NOTICE_CAP {
@@ -1270,16 +1280,19 @@ fn update_widget(
     revision: u64,
     flags: u16,
     payload: &[u8],
-) -> bool {
-    let Some(mut widget) = parse_widget(payload) else {
-        return false;
-    };
+) -> Option<bool> {
+    // None: protocol violation; Some(accepted) otherwise (stale drops are false)
+    if flags & !WIDGET_FLAG_EXPLORER != 0 {
+        return None;
+    }
+    let mut widget = parse_widget(payload)?;
     if widgets.get(&id).map_or(true, |old| revision > old.revision) {
         widget.revision = revision;
         widget.explorer = flags & WIDGET_FLAG_EXPLORER != 0;
         widgets.insert(id, widget);
+        return Some(true);
     }
-    true
+    Some(false)
 }
 
 #[cfg(test)]
@@ -1406,32 +1419,13 @@ mod tests {
     #[test]
     fn stale_widget_revision_is_dropped() {
         let mut widgets = HashMap::new();
-        assert!(update_widget(
-            &mut widgets,
-            1,
-            2,
-            0,
-            &widget_payload(&["new"])
-        ));
-        assert_eq!(widgets.get(&1).unwrap().items, vec!["new".to_string()]);
-
-        assert!(update_widget(
-            &mut widgets,
-            1,
-            1,
-            0,
-            &widget_payload(&["stale"])
-        ));
-        assert_eq!(widgets.get(&1).unwrap().revision, 2);
-        assert_eq!(widgets.get(&1).unwrap().items, vec!["new".to_string()]);
-
-        assert!(update_widget(
-            &mut widgets,
-            1,
-            3,
-            0,
-            &widget_payload(&["newer"])
-        ));
+        let mut update =
+            |rev, flags, item| update_widget(&mut widgets, 1, rev, flags, &widget_payload(&[item]));
+        assert_eq!(update(2, 0, "new"), Some(true));
+        assert_eq!(update(1, 0, "stale"), Some(false));
+        assert_eq!(update(3, 0, "newer"), Some(true));
+        // unknown frame flag bits are a protocol violation
+        assert_eq!(update(4, 0x2, "x"), None);
         assert_eq!(widgets.get(&1).unwrap().revision, 3);
         assert_eq!(widgets.get(&1).unwrap().items, vec!["newer".to_string()]);
     }
