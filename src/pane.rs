@@ -81,7 +81,7 @@ pub fn draw(
                     row.extend_from_slice(cell.as_bytes());
                     if c + 1 < cells.len() {
                         let pad = widths[c] - cell.chars().count() + 2;
-                        row.extend(std::iter::repeat(b' ').take(pad));
+                        row.extend(std::iter::repeat_n(b' ', pad));
                     }
                 }
             };
@@ -105,7 +105,7 @@ pub fn draw(
                 let at = i - top;
                 if w.kind == W_TREE {
                     let (depth, flags) = w.tree.get(i).copied().unwrap_or((0, 0));
-                    rows[at].extend(std::iter::repeat(b' ').take(2 * depth as usize));
+                    rows[at].extend(std::iter::repeat_n(b' ', 2 * depth as usize));
                     let marker: &[u8] = match (flags & TREE_HAS_CHILDREN, flags & TREE_EXPANDED) {
                         (0, _) => b"  ",
                         (_, 0) => "▸ ".as_bytes(),

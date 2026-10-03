@@ -111,6 +111,7 @@ impl Default for LifecycleModel {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Frame {
     pub msg_type: u16,
     pub flags: u16,

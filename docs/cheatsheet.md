@@ -27,6 +27,7 @@ manager package.
 | Ctrl-F | Find |
 | Ctrl-P | Command palette |
 | Ctrl-O | Tree/file picker |
+| Ctrl-T | Plugin explorer/action pane (when a plugin provides one) |
 | Ctrl-G | Repeat search |
 | Ctrl-R | Replace |
 | Ctrl-Q | Quit (confirm if unsaved) |
@@ -48,6 +49,7 @@ save
 save-as <path>
 reload
 follow
+jobs
 quit
 ```
 

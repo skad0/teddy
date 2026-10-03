@@ -9,6 +9,19 @@ Usage: `teddy [-w workspace-root] [-F|--follow] [file ...]`.
 Modes include Edit, ConfirmQuit, Prompt, ReplaceConfirm, Palette, Picker, and
 PluginWidget.
 
+Layout uses fixed slots. The bottom slot sits under the editor rows and above
+the statusline, and takes about a third of the editor area (3 to 12 rows,
+including its title row). It shows the Ctrl+T explorer while that is focused,
+and otherwise the jobs pane when it is open.
+
+* **Ctrl+T** focuses the plugin-provided explorer/action surface (a widget
+  flagged explorer). If no plugin provides one, the statusline says `no
+  explorer plugin`. Esc or Ctrl+T returns to the editor.
+* **Jobs pane**: a core log showing plugin failure reasons, exit statuses, and
+  stderr tails, plus save, search, and replace outcomes. Its title row shows
+  live search, replace, and index progress. A plugin failure opens it, and the
+  `jobs` palette command toggles it.
+
 ## Palette commands
 
 * `goto <line>`
@@ -18,6 +31,7 @@ PluginWidget.
 * `save-as <path>`
 * `reload`
 * `follow`
+* `jobs`
 * `quit`
 
 There is no user-facing `plugin-restart` command. Plugin lifecycle control is
