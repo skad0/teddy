@@ -73,6 +73,9 @@ pub struct Buffer {
     pub undo_bytes: usize,
     pub group_counter: u64,
     dropped_group: Option<u64>,
+    /// Set when an edit group was too large to keep undoable; the main
+    /// loop reports it once and clears it.
+    pub undo_dropped: bool,
     state_id: u64,
     saved_state_id: u64,
     next_state_id: u64,
@@ -154,6 +157,7 @@ impl Buffer {
             undo_bytes: 0,
             group_counter: 0,
             dropped_group: None,
+            undo_dropped: false,
             state_id: 0,
             saved_state_id: 0,
             next_state_id: 1,
@@ -651,6 +655,7 @@ impl Buffer {
                 self.undo.clear();
                 self.undo_bytes = 0;
                 self.dropped_group = Some(live_group);
+                self.undo_dropped = true;
                 break;
             }
             while self.undo[0].group == victim_group {
@@ -1112,6 +1117,7 @@ mod tests {
         b.push_undo(entry(2, 10)); // live group alone over cap: dropped whole
         b.push_undo(entry(2, 10)); // and its later entries are not kept
         assert!(b.undo.is_empty());
+        assert!(b.undo_dropped);
         assert_eq!(b.undo_bytes, 0);
         b.push_undo(entry(3, 10)); // next group is undoable again
         assert_eq!(b.undo.len(), 1);

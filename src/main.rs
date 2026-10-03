@@ -1839,9 +1839,18 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                     }
                     if register.len as usize <= term::OSC52_CAP {
                         scratch.clear();
-                        buf.read_range(s, e - s, &mut scratch);
-                        let _ = term::osc52(&mut out, &scratch);
-                        let _ = write!(status_msg, "copied {} bytes", register.len);
+                        if (0..register.piece_count())
+                            .all(|i| register.read_piece(i, &mut scratch).is_ok())
+                        {
+                            let _ = term::osc52(&mut out, &scratch);
+                            let _ = write!(status_msg, "copied {} bytes", register.len);
+                        } else {
+                            let _ = write!(
+                                status_msg,
+                                "copied {} bytes (system clipboard: read error)",
+                                register.len
+                            );
+                        }
                     } else {
                         let _ = write!(
                             status_msg,
@@ -2004,6 +2013,15 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                 dirty = true;
             } else if buffers[active].index_build.is_some() {
                 buffers[active].step_index_build(4 * 1024 * 1024, &mut job_scratch);
+                dirty = true;
+            }
+        }
+
+        // any edit path (paste, replace-all, plugin) can overflow undo
+        for b in buffers.iter_mut() {
+            if std::mem::take(&mut b.undo_dropped) {
+                status_msg.clear();
+                let _ = write!(status_msg, "{}: edit too large to undo", b.name);
                 dirty = true;
             }
         }
