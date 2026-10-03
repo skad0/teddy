@@ -82,10 +82,7 @@ impl Buffer {
     }
 
     pub fn open(path: &Path) -> io::Result<Self> {
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| path.display().to_string());
+        let name = display_name(path);
         if !path.exists() {
             // new file: empty buffer, created on save
             let mut b = Buffer::from_parts(None, Some(path.to_path_buf()), name);
@@ -557,10 +554,7 @@ impl Buffer {
 
     /// Point the buffer at a new path and save there (palette save-as).
     pub fn save_as(&mut self, path: PathBuf) -> io::Result<()> {
-        self.name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| path.display().to_string());
+        self.name = display_name(&path);
         self.path = Some(path);
         self.disk_state = None; // new target: no stale-guard basis yet
         self.save(true)
@@ -653,6 +647,14 @@ impl Buffer {
     }
 }
 
+/// Tab/status name: raw file-name bytes with control and invalid bytes as
+/// `\xNN`, so nothing hostile survives into chrome or reads as U+FFFD.
+fn display_name(path: &Path) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    let raw = path.file_name().unwrap_or(path.as_os_str());
+    crate::render::escape_chrome(raw.as_bytes())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -661,6 +663,85 @@ mod tests {
         let p = std::env::temp_dir().join(format!("teddy-buftest-{}-{}", std::process::id(), name));
         std::fs::write(&p, data).unwrap();
         p
+    }
+
+    #[test]
+    fn hostile_file_name_cannot_reach_the_terminal() {
+        use crate::render::{paint, FrameBuf, RenderCache, View};
+        // ESC[2J clears the screen; BEL and U+009B (C1 CSI) are never emitted
+        // by the editor itself, so any raw occurrence is an injection
+        let p = temp("evil\x1b[2J\x07\u{9b}31m.txt", b"x");
+        let b = Buffer::open(&p).unwrap();
+        let _ = std::fs::remove_file(&p);
+        assert!(
+            b.name.ends_with("evil\\x1B[2J\\x07\\xC2\\x9B31m.txt"),
+            "{:?}",
+            b.name
+        );
+        // invalid UTF-8 escapes too, not U+FFFD (path never created: APFS
+        // rejects such names, and a missing path opens as a new buffer)
+        use std::os::unix::ffi::OsStrExt;
+        let raw = Path::new(std::ffi::OsStr::from_bytes(
+            b"/nonexistent-teddy/\xff\x1b.rs",
+        ));
+        assert_eq!(Buffer::open(raw).unwrap().name, "\\xFF\\x1B.rs");
+
+        let tabs = vec![(b.name.clone(), false)];
+        let status = format!(" {}", b.name);
+        let v = View {
+            cols: 200,
+            rows: 5,
+            tabs: &tabs,
+            active_tab: 0,
+            row_bytes: &[],
+            row_sel: &[],
+            row_spans: &[],
+            left_col: 0,
+            cursor_screen: (0, 0),
+            status_left: &status,
+            status_right: "",
+        };
+        let mut f = FrameBuf::new();
+        let mut cache = RenderCache::new();
+        // first frame carries the editor's own resize clear; prime the cache
+        paint(
+            &mut f,
+            &mut cache,
+            &View {
+                tabs: &[],
+                status_left: "",
+                ..v
+            },
+        );
+        paint(&mut f, &mut cache, &v);
+        let out = f.as_bytes();
+        let s = String::from_utf8_lossy(out);
+        assert!(!s.contains("\x1b[2J"), "{s:?}");
+        assert!(!out.contains(&0x07), "{s:?}");
+        assert!(!out.windows(2).any(|w| w == b"\xc2\x9b"), "{s:?}");
+        assert_eq!(
+            s.matches("evil\\x1B[2J\\x07\\xC2\\x9B31m.txt").count(),
+            2,
+            "{s:?}"
+        );
+
+        // the render boundary also guards raw names (e.g. a status message)
+        let tabs = vec![("raw\x1b[2J".to_string(), false)];
+        paint(
+            &mut f,
+            &mut cache,
+            &View {
+                tabs: &tabs,
+                status_left: "\x1b[2J\x07",
+                ..v
+            },
+        );
+        let s = String::from_utf8_lossy(f.as_bytes());
+        assert!(!s.contains("\x1b[2J") && !s.contains('\x07'), "{s:?}");
+        assert!(
+            s.contains("raw\\x1B[2J") && s.contains("\\x1B[2J\\x07"),
+            "{s:?}"
+        );
     }
 
     #[test]
