@@ -72,6 +72,7 @@ pub struct Buffer {
     pub redo: Vec<UndoEntry>,
     pub undo_bytes: usize,
     pub group_counter: u64,
+    dropped_group: Option<u64>,
     state_id: u64,
     saved_state_id: u64,
     next_state_id: u64,
@@ -152,6 +153,7 @@ impl Buffer {
             redo: Vec::new(),
             undo_bytes: 0,
             group_counter: 0,
+            dropped_group: None,
             state_id: 0,
             saved_state_id: 0,
             next_state_id: 1,
@@ -632,17 +634,26 @@ impl Buffer {
     }
 
     fn push_undo(&mut self, e: UndoEntry) {
+        if self.dropped_group == Some(e.group) {
+            return; // rest of a group already given up on below
+        }
         self.undo_bytes += e.byte_cost;
         let live_group = e.group;
         self.undo.push(e);
         const UNDO_CAP: usize = 8 * 1024 * 1024; // spec §8: fixed byte cap
                                                  // evict whole groups: dropping half a group would leave undo_group
                                                  // restoring a corrupted intermediate state
-                                                 // never the group still being built (multi-chunk paste): half of
-                                                 // it would make one undo leave the other half applied
-        while self.undo_bytes > UNDO_CAP && self.undo[0].group != live_group {
+        while self.undo_bytes > UNDO_CAP && self.undo.len() > 1 {
             let victim_group = self.undo[0].group;
-            while self.undo.len() > 1 && self.undo[0].group == victim_group {
+            if victim_group == live_group {
+                // the group being built (chunked paste, replace-all) alone
+                // exceeds the cap: it becomes non-undoable, never half-undoable
+                self.undo.clear();
+                self.undo_bytes = 0;
+                self.dropped_group = Some(live_group);
+                break;
+            }
+            while self.undo[0].group == victim_group {
                 let dropped = self.undo.remove(0); // ponytail: O(n) shift, undo depth is small
                 self.undo_bytes -= dropped.byte_cost;
             }
@@ -1082,7 +1093,7 @@ mod tests {
     }
 
     #[test]
-    fn undo_cap_never_evicts_the_group_being_built() {
+    fn undo_cap_drops_an_oversized_group_whole() {
         let mut b = Buffer::untitled();
         let entry = |group, byte_cost| UndoEntry {
             start: 0,
@@ -1097,10 +1108,12 @@ mod tests {
         };
         b.push_undo(entry(1, 10));
         b.push_undo(entry(2, 9 * 1024 * 1024)); // over cap: evicts group 1 only
-        b.push_undo(entry(2, 10)); // same group: must keep its first half
-        assert_eq!(b.undo.len(), 2);
-        assert!(b.undo.iter().all(|e| e.group == 2));
-        b.push_undo(entry(3, 10)); // next group: old over-cap group goes
+        assert_eq!(b.undo.len(), 1);
+        b.push_undo(entry(2, 10)); // live group alone over cap: dropped whole
+        b.push_undo(entry(2, 10)); // and its later entries are not kept
+        assert!(b.undo.is_empty());
+        assert_eq!(b.undo_bytes, 0);
+        b.push_undo(entry(3, 10)); // next group is undoable again
         assert_eq!(b.undo.len(), 1);
     }
 }
