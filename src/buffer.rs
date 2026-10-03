@@ -652,7 +652,7 @@ impl Buffer {
 pub(crate) fn display_name(path: &Path) -> String {
     use std::os::unix::ffi::OsStrExt;
     let raw = path.file_name().unwrap_or(path.as_os_str());
-    crate::render::escape_chrome(raw.as_bytes())
+    crate::render::escape_name(raw.as_bytes())
 }
 
 #[cfg(test)]
@@ -685,6 +685,9 @@ mod tests {
             b"/nonexistent-teddy/\xff\x1b.rs",
         ));
         assert_eq!(Buffer::open(raw).unwrap().name, "\\xFF\\x1B.rs");
+        // a literal `\x1B` in the name must not read as an escaped ESC
+        let spoof = Path::new("/nonexistent-teddy/a\\x1Bb");
+        assert_eq!(Buffer::open(spoof).unwrap().name, "a\\x5Cx1Bb");
 
         let tabs = vec![(b.name.clone(), false)];
         let status = format!(" {}", b.name);

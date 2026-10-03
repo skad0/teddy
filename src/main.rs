@@ -136,7 +136,7 @@ fn main() -> ExitCode {
         // writeln, not eprintln: a panic inside the hook would abort
         let mut err = std::io::stderr();
         let _ = match written {
-            Ok(path) => writeln!(err, "teddy: crash log written to {}", path.display()),
+            Ok(path) => writeln!(err, "teddy: crash log written to {}", chrome_path(&path)),
             Err(e) => writeln!(err, "teddy: could not write crash log: {e}"),
         };
     }));
@@ -2694,7 +2694,7 @@ fn clamp_left(buf: &mut Buffer, vcol: usize, cols: usize) {
 /// Path for the statusline: raw bytes, control/invalid ones as `\xNN`.
 fn chrome_path(path: &Path) -> String {
     use std::os::unix::ffi::OsStrExt;
-    render::escape_chrome(path.as_os_str().as_bytes())
+    render::escape_name(path.as_os_str().as_bytes())
 }
 
 fn format_status(buf: &mut Buffer, left: &mut String, right: &mut String) {

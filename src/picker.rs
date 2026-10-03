@@ -187,7 +187,7 @@ impl Picker {
 /// bytes as `\xNN`, matching the tab name the file gets once opened.
 fn chrome_rel(root: &Path, p: &Path) -> String {
     use std::os::unix::ffi::OsStrExt;
-    crate::render::escape_chrome(p.strip_prefix(root).unwrap_or(p).as_os_str().as_bytes())
+    crate::render::escape_name(p.strip_prefix(root).unwrap_or(p).as_os_str().as_bytes())
 }
 
 #[cfg(test)]

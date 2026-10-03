@@ -138,13 +138,24 @@ fn next_token(bytes: &[u8], cell: usize) -> Token {
 
 /// Chrome text (tab names, statusline): control, C1 and invalid bytes become
 /// literal `\xNN` exactly as in buffer rows, but with no SGR (chrome is
-/// already styled) and tabs escaped too. Idempotent on its own output.
+/// already styled) and tabs escaped too. Idempotent on its own output, so
+/// paint can apply it as a safety net over already-escaped names.
 pub fn escape_chrome(bytes: &[u8]) -> String {
+    escape(bytes, false)
+}
+
+/// File names for chrome, stderr and plugins: `escape_chrome` plus `\` as
+/// `\x5C`, so every `\xNN` in the result is an escape and unescaping is exact.
+pub fn escape_name(bytes: &[u8]) -> String {
+    escape(bytes, true)
+}
+
+fn escape(bytes: &[u8], backslash: bool) -> String {
     let mut s = String::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
         match next_token(&bytes[i..], 0) {
-            Token::Char(n, _) if bytes[i] != b'\t' => {
+            Token::Char(n, _) if bytes[i] != b'\t' && !(backslash && bytes[i] == b'\\') => {
                 s.push_str(std::str::from_utf8(&bytes[i..i + n]).unwrap_or("?"));
                 i += n;
             }
@@ -561,6 +572,11 @@ mod tests {
         );
         let once = escape_chrome(b"x\x1by");
         assert_eq!(escape_chrome(once.as_bytes()), once);
+        // a literal backslash can't pose as an escape, and paint's
+        // second pass leaves the name alone
+        let name = escape_name(b"a\\x1Bb\x1b");
+        assert_eq!(name, "a\\x5Cx1Bb\\x1B");
+        assert_eq!(escape_chrome(name.as_bytes()), name);
     }
 
     #[test]
