@@ -159,6 +159,45 @@ impl AddStore {
     }
 }
 
+// ---------------------------------------------------------------- register
+
+/// Copy/paste register (roadmap #1). Owns its own spillable add store, so
+/// it outlives tab changes and reloads, and a large copy spills to the OS
+/// temp file instead of growing RSS (spec §5.3). One piece per pushed chunk.
+pub struct Register {
+    store: AddStore,
+    pieces: Vec<Piece>,
+    pub len: u64,
+}
+
+impl Register {
+    pub fn new() -> Self {
+        Register {
+            store: AddStore::new(),
+            pieces: Vec::new(),
+            len: 0,
+        }
+    }
+
+    pub fn push(&mut self, bytes: &[u8]) -> io::Result<()> {
+        let (src, start) = self.store.push(bytes)?;
+        let len = bytes.len() as u64;
+        self.pieces.push(Piece { src, start, len });
+        self.len += len;
+        Ok(())
+    }
+
+    pub fn piece_count(&self) -> usize {
+        self.pieces.len()
+    }
+
+    /// Append the bytes of piece `i` (at most one pushed chunk) to `out`.
+    pub fn read_piece(&self, i: usize, out: &mut Vec<u8>) -> io::Result<()> {
+        let p = self.pieces[i];
+        self.store.read_into(p.src, p.start, p.len, out)
+    }
+}
+
 // -------------------------------------------------------------- piece chain
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
