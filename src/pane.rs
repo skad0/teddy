@@ -23,21 +23,23 @@ fn top_for(sel: usize, h: usize) -> usize {
 
 /// Lay `w` out into `rows` (one fixed slot, no plugin-controlled geometry).
 /// `sel` is the cursor from `selectable`; `input` is the prompt/search text.
+/// Returns `sel` clamped to what is reachable at this height, for the caller
+/// to keep (a text scroll past the last page would otherwise feel stuck).
 pub fn draw(
     w: &Widget,
     sel: usize,
     input: &str,
     rows: &mut [Vec<u8>],
     row_sel: &mut [Option<(usize, usize)>],
-) {
+) -> usize {
     rows.iter_mut().for_each(Vec::clear);
     row_sel.iter_mut().for_each(|s| *s = None);
     let h = rows.len();
     if h == 0 {
-        return;
+        return sel;
     }
     // the widget may have shrunk since the cursor last moved
-    let sel = sel.min(selectable(w).saturating_sub(1));
+    let mut sel = sel.min(selectable(w).saturating_sub(1));
     let highlight = |rows: &mut [Vec<u8>], row_sel: &mut [Option<(usize, usize)>], r: usize| {
         row_sel[r] = Some((0, rows[r].len()));
     };
@@ -66,8 +68,8 @@ pub fn draw(
             }
         }
         W_TEXT => {
-            let top = sel.min(w.items.len().saturating_sub(h));
-            for (row, line) in rows.iter_mut().zip(w.items.iter().skip(top)) {
+            sel = sel.min(w.items.len().saturating_sub(h));
+            for (row, line) in rows.iter_mut().zip(w.items.iter().skip(sel)) {
                 row.extend_from_slice(line.as_bytes());
             }
         }
@@ -122,6 +124,7 @@ pub fn draw(
             }
         }
     }
+    sel
 }
 
 #[cfg(test)]
@@ -246,6 +249,10 @@ mod tests {
         assert_eq!(render(&log, 0, "", 5).0, vec!["1", "2", "3", "", ""]);
         let text = w(W_TEXT, 0, &["a", "b", "c"], &[]);
         assert_eq!(render(&text, 1, "", 2).0, vec!["b", "c"]);
+        // a scroll past the last page is handed back clamped
+        let mut rows = vec![Vec::new(); 2];
+        let mut row_sel = vec![None; 2];
+        assert_eq!(draw(&text, 9, "", &mut rows, &mut row_sel), 1);
         assert_eq!(render(&text, 9, "", 2).0, vec!["b", "c"]);
         assert!(render(&text, 0, "", 2).1.iter().all(Option::is_none));
     }

@@ -1174,10 +1174,22 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
         );
 
         for p in &mut plugins {
+            // report once the child is reaped, so the reason carries its exit
+            // status as a single entry
+            if p.state == plugin::PluginState::Stopping {
+                continue;
+            }
             if let Some(reason) = p.failure.take() {
-                // a dead child's last words are still in the pipe; read them
-                // before reporting (its fd is no longer polled)
-                p.drain_stderr(16 * 1024);
+                // a dead child's last words are still in the pipe (its fd is
+                // no longer polled): read to EOF, bounded
+                let mut left = 64 * 1024usize;
+                while left > 0 {
+                    let n = p.drain_stderr(left);
+                    if n == 0 {
+                        break;
+                    }
+                    left = left.saturating_sub(n);
+                }
                 status_msg.clear();
                 let _ = write!(status_msg, "{}: plugin stopped (details: jobs)", p.name);
                 jobs_push(&mut jobs, format!("{}: {reason}", p.name));
@@ -1809,7 +1821,7 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                             }
                             _ => {}
                         },
-                        Key::Char(_) if widget_input.len() >= WIDGET_INPUT_CAP => {}
+                        Key::Char(c) if widget_input.len() + c.len_utf8() > WIDGET_INPUT_CAP => {}
                         Key::Char(c) if kind == plugin::W_PROMPT || searchable => {
                             widget_input.push(c);
                             if searchable {
@@ -2206,13 +2218,15 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                         // legacy center overlay over the editor rows
                         let er = editor_rows as usize;
                         match w {
-                            Some(w) => pane::draw(
-                                w,
-                                widget_sel,
-                                &widget_input,
-                                &mut row_store[..er],
-                                &mut row_sel[..er],
-                            ),
+                            Some(w) => {
+                                widget_sel = pane::draw(
+                                    w,
+                                    widget_sel,
+                                    &widget_input,
+                                    &mut row_store[..er],
+                                    &mut row_sel[..er],
+                                )
+                            }
                             None => row_store.iter_mut().for_each(Vec::clear),
                         }
                     }
@@ -2251,7 +2265,7 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                 match focused {
                     Some((name, w)) => {
                         let _ = write!(title, " explorer: {name}");
-                        pane::draw(w, widget_sel, &widget_input, body, body_sel);
+                        widget_sel = pane::draw(w, widget_sel, &widget_input, body, body_sel);
                     }
                     None => {
                         title.extend_from_slice(b" jobs");
