@@ -833,6 +833,9 @@ pub struct Plugin {
     pub failure: Option<String>,
     /// Rolling post-HELLO stderr lines, kept across cleanup as failure detail.
     pub stderr_tail: Vec<String>,
+    /// Why a `Stopping` child was killed; published into `failure` with its
+    /// exit status once reaped, so one stop is one report.
+    stop_reason: Option<String>,
     pub wants_viewport: bool,
     hello_ok: bool,
     pub source: PluginSource,
@@ -894,6 +897,7 @@ impl Plugin {
             notices: Vec::new(),
             failure: None,
             stderr_tail: Vec::new(),
+            stop_reason: None,
             wants_viewport: false,
             hello_ok: false,
             source,
@@ -998,6 +1002,10 @@ impl Plugin {
     }
 
     pub fn restart(&mut self) -> io::Result<()> {
+        // a reload must not swallow a stop the core has not reported yet
+        if let Some(reason) = self.stop_reason.take() {
+            self.publish_failure(reason);
+        }
         let _ = self.child.kill();
         match self.child.try_wait()? {
             Some(_) => {}
@@ -1036,7 +1044,10 @@ impl Plugin {
         self.commands.clear();
         self.widgets.clear();
         self.notices.clear();
-        self.stderr_tail.clear();
+        if self.failure.is_none() {
+            // keep the tail while its failure is still unreported
+            self.stderr_tail.clear();
+        }
         self.wants_viewport = false;
         self.hello_ok = false;
         self.state = PluginState::Starting;
@@ -1083,13 +1094,13 @@ impl Plugin {
 
     fn service_process(&mut self) {
         if !self.alive && self.state == PluginState::Stopping {
+            // ponytail: a child that never reaps after SIGKILL keeps its reason
+            // unpublished; only a kernel-level hang gets here.
             if let Some(status) = self.child.try_wait().ok().flatten() {
+                if let Some(reason) = self.stop_reason.take() {
+                    self.publish_failure(format!("{reason}; exited: {status}"));
+                }
                 if self.retry_after_reap {
-                    let exited = format!("exited: {status}");
-                    self.failure = Some(match self.failure.take() {
-                        Some(reason) => format!("{reason}; {exited}"),
-                        None => exited,
-                    });
                     self.retry_after_reap = false;
                     self.schedule_retry();
                 } else {
@@ -1102,7 +1113,7 @@ impl Plugin {
             return;
         }
         if let Some(status) = self.child.try_wait().ok().flatten() {
-            self.failure = Some(format!("exited: {status}"));
+            self.publish_failure(format!("exited: {status}"));
             self.alive = false;
             self.clear_contributions();
             self.schedule_retry();
@@ -1111,8 +1122,21 @@ impl Plugin {
         }
     }
 
+    /// Append to an unreported failure rather than overwrite it.
+    fn publish_failure(&mut self, line: String) {
+        self.failure = Some(match self.failure.take() {
+            Some(prev) => format!("{prev}; {line}"),
+            None => line,
+        });
+    }
+
     fn fail_unexpected(&mut self, reason: &str) {
-        self.failure = Some(reason.to_owned());
+        // already down (e.g. pump saw the exit, then read the EOF it left):
+        // re-entering Stopping would report the same death twice
+        if !self.alive {
+            return;
+        }
+        self.stop_reason.get_or_insert_with(|| reason.to_owned());
         self.alive = false;
         self.state = PluginState::Stopping;
         self.retry_after_reap = true;
@@ -1202,7 +1226,8 @@ impl Plugin {
     }
 
     pub fn fail_protocol(&mut self, reason: &str) {
-        self.failure = Some(format!("protocol violation: {reason}"));
+        self.stop_reason
+            .get_or_insert_with(|| format!("protocol violation: {reason}"));
         self.stop_child();
     }
 
@@ -1618,6 +1643,31 @@ mod tests {
         model.attempts = 7;
         model.reset_retry_budget();
         assert_eq!(model.attempts, 0);
+    }
+
+    #[test]
+    fn a_crash_is_published_once_with_its_exit_status() {
+        // /usr/bin/false exits 1 without HELLO: EOF/kill reason and the
+        // reaped status must arrive as one report, never as two.
+        let mut p = Plugin::spawn(Path::new("/usr/bin/false")).unwrap();
+        p.max_restarts = 0;
+        // let it exit first: pump then sees the exit *and* the EOF it leaves
+        std::thread::sleep(Duration::from_millis(100));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut reports = Vec::new();
+        while Instant::now() < deadline && p.state != PluginState::Failed {
+            p.pump();
+            p.service();
+            reports.extend(p.failure.take());
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(p.state, PluginState::Failed);
+        assert_eq!(reports.len(), 1, "{reports:?}");
+        assert_eq!(reports[0].matches("exited:").count(), 1, "{reports:?}");
+        assert!(
+            reports[0].ends_with("exited: exit status: 1"),
+            "{reports:?}"
+        );
     }
 
     #[test]

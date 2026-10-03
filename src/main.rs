@@ -1174,11 +1174,6 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
         );
 
         for p in &mut plugins {
-            // report once the child is reaped, so the reason carries its exit
-            // status as a single entry
-            if p.state == plugin::PluginState::Stopping {
-                continue;
-            }
             if let Some(reason) = p.failure.take() {
                 // a dead child's last words are still in the pipe (its fd is
                 // no longer polled): read to EOF, bounded
