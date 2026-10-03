@@ -2018,12 +2018,21 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
         }
 
         // any edit path (paste, replace-all, plugin) can overflow undo
+        let mut dropped_any = false;
         for b in buffers.iter_mut() {
             if std::mem::take(&mut b.undo_dropped) {
-                status_msg.clear();
-                let _ = write!(status_msg, "{}: edit too large to undo", b.name);
-                dirty = true;
+                if !dropped_any {
+                    status_msg.clear();
+                } else {
+                    status_msg.push_str(", ");
+                }
+                status_msg.push_str(&b.name);
+                dropped_any = true;
             }
+        }
+        if dropped_any {
+            status_msg.push_str(": edit too large to undo");
+            dirty = true;
         }
 
         if dirty && !term::poll_stdin(&[], &mut idle_ready, 0)? {
