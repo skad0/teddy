@@ -138,13 +138,24 @@ fn next_token(bytes: &[u8], cell: usize) -> Token {
 
 /// Chrome text (tab names, statusline): control, C1 and invalid bytes become
 /// literal `\xNN` exactly as in buffer rows, but with no SGR (chrome is
-/// already styled) and tabs escaped too. Idempotent on its own output.
+/// already styled) and tabs escaped too. Idempotent on its own output, so
+/// paint can apply it as a safety net over already-escaped names.
 pub fn escape_chrome(bytes: &[u8]) -> String {
+    escape(bytes, false)
+}
+
+/// File names for chrome, stderr and plugins: `escape_chrome` plus `\` as
+/// `\x5C`, so every `\xNN` in the result is an escape and unescaping is exact.
+pub fn escape_name(bytes: &[u8]) -> String {
+    escape(bytes, true)
+}
+
+fn escape(bytes: &[u8], backslash: bool) -> String {
     let mut s = String::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
         match next_token(&bytes[i..], 0) {
-            Token::Char(n, _) if bytes[i] != b'\t' => {
+            Token::Char(n, _) if bytes[i] != b'\t' && !(backslash && bytes[i] == b'\\') => {
                 s.push_str(std::str::from_utf8(&bytes[i..i + n]).unwrap_or("?"));
                 i += n;
             }
@@ -428,6 +439,21 @@ fn truncated(s: &str, max: usize) -> &str {
         while end > 0 && !s.is_char_boundary(end) {
             end -= 1;
         }
+        // never split an escape_chrome `\xNN` token: the text is already
+        // escaped (names arrive pre-escaped), so the token is recovered by shape
+        let b = s.as_bytes();
+        for i in end.saturating_sub(3)..end {
+            if b[i] == b'\\'
+                && b.get(i + 1) == Some(&b'x')
+                && b.get(i + 2..i + 4).is_some_and(|h| {
+                    h.iter()
+                        .all(|c| c.is_ascii_digit() || (b'A'..=b'F').contains(c))
+                })
+            {
+                end = i;
+                break;
+            }
+        }
         &s[..end]
     }
 }
@@ -546,6 +572,24 @@ mod tests {
         );
         let once = escape_chrome(b"x\x1by");
         assert_eq!(escape_chrome(once.as_bytes()), once);
+        // a literal backslash can't pose as an escape, and paint's
+        // second pass leaves the name alone
+        let name = escape_name(b"a\\x1Bb\x1b");
+        assert_eq!(name, "a\\x5Cx1Bb\\x1B");
+        assert_eq!(escape_chrome(name.as_bytes()), name);
+    }
+
+    #[test]
+    fn truncation_never_splits_escape_tokens() {
+        // pre-escaped name: every cut inside `\x1B` backs off to before it
+        for max in 2..=4 {
+            assert_eq!(truncated(" a\\x1B.txt", max + 1), " a");
+        }
+        assert_eq!(truncated(" a\\x1B.txt", 6), " a\\x1B");
+        // raw path: escaped first, then cut
+        assert_eq!(truncated(&escape_chrome(b"ab\x1b"), 4), "ab");
+        // not an escape token: ordinary byte cut
+        assert_eq!(truncated("a\\xZZ", 3), "a\\x");
     }
 
     #[test]
