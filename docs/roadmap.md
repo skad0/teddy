@@ -152,5 +152,23 @@ spec gap but has a working (if slow) fallback, so it waits for a calm window.
   register. Ctrl+W closes the tab.
 - **Folds into existing tasks:** Seq 43, Seq 45 and Seq 47, per §3
   "Suggested folds into existing briefs".
-- **Other proposals:** filed as board tasks Seq 56–67. The board is the source
-  of truth for which proposal maps to which task.
+- **Other proposals:** filed as board tasks Seq 56–67.
+
+| # | Proposal | Board task |
+|---|---|---|
+| 1 | Clipboard | Seq 56 |
+| 2 | Tab lifecycle | Seq 57 |
+| 3 | Huge-file goto | Seq 58 |
+| 4 | Crash log | Seq 59 |
+| 5 | Word & document-edge movement | folded into Seq 45 |
+| 6 | Undo pause grouping | Seq 60 |
+| 7 | Adaptive huge save | Seq 61 |
+| 8 | Palette as help | Seq 62 |
+| 9 | Bottom jobs pane | folded into Seq 47 |
+| 10 | Contextual statusline hints | Seq 63 |
+| 11 | Focus events | folded into Seq 45 |
+| 12 | Theme loading by name | folded into Seq 43 (plus the statusline-format key) |
+| 13 | External search plugin example | Seq 64 |
+| 14 | Line-number gutter | Seq 65 |
+| 15 | Explicit "index now" | Seq 66 |
+| 16 | Picker fuzzy ranking | Seq 67 |
