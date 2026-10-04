@@ -1657,21 +1657,31 @@ mod tests {
         assert_eq!(model.attempts, 0);
     }
 
-    /// A throwaway executable script. It sleeps first so `spawn` can always
+    /// Spawn a throwaway script plugin. It sleeps first so `spawn` can always
     /// write HELLO; a child that exits at once races it to EPIPE on Linux.
-    fn script(name: &str, body: &str) -> PathBuf {
+    fn spawn_script(name: &str, body: &str) -> Plugin {
         use std::os::unix::fs::PermissionsExt;
         let path = std::env::temp_dir().join(format!("teddy-{}-{name}", std::process::id()));
         std::fs::write(&path, format!("#!/bin/sh\nsleep 0.2\n{body}\n")).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        path
+        // Linux ETXTBSY: a test thread forking right now inherits our write
+        // fd until its exec; retry briefly instead of failing.
+        for _ in 0..100 {
+            match Plugin::spawn(&path) {
+                Err(e) if e.kind() == io::ErrorKind::ExecutableFileBusy => {
+                    std::thread::sleep(Duration::from_millis(10))
+                }
+                result => return result.unwrap(),
+            }
+        }
+        panic!("{} stayed busy", path.display());
     }
 
     #[test]
     fn a_crash_is_published_once_with_its_exit_status() {
         // exits 1 without HELLO: EOF/kill reason and the reaped status must
         // arrive as one report, never as two.
-        let mut p = Plugin::spawn(&script("crash", "exit 1")).unwrap();
+        let mut p = spawn_script("crash", "exit 1");
         p.max_restarts = 0;
         // let it exit first: pump then sees the exit *and* the EOF it leaves
         std::thread::sleep(Duration::from_millis(100));
@@ -1697,7 +1707,7 @@ mod tests {
         // prints well over 28 non-frame bytes and exits 0: pump sees the exit
         // first, then decodes the junk as an oversized frame.
         let junk = "echo 'not a teddy plugin, only plain text output on stdout'";
-        let mut p = Plugin::spawn(&script("junk", junk)).unwrap();
+        let mut p = spawn_script("junk", junk);
         p.max_restarts = 1;
         p.backoff_ms = 60_000;
         // wait for the real exit (std caches the status for later try_wait)
