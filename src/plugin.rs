@@ -1226,14 +1226,21 @@ impl Plugin {
     }
 
     pub fn fail_protocol(&mut self, reason: &str) {
-        // already down: pump saw the exit, then decoded bytes the dead child
-        // left behind; one stop is one report (and Backoff stays Backoff)
-        if !self.alive {
-            return;
+        let reason = || format!("protocol violation: {reason}");
+        match (self.alive, self.state) {
+            // being killed (e.g. just disabled): keep the violation for the
+            // reap report, but don't re-stop, which would cancel a retry
+            (false, PluginState::Stopping) => {
+                self.stop_reason.get_or_insert_with(reason);
+            }
+            // already reaped and reported (pump saw the exit, then decoded
+            // bytes the dead child left): one stop is one report
+            (false, _) => {}
+            (true, _) => {
+                self.stop_reason.get_or_insert_with(reason);
+                self.stop_child();
+            }
         }
-        self.stop_reason
-            .get_or_insert_with(|| format!("protocol violation: {reason}"));
-        self.stop_child();
     }
 
     fn stop_child(&mut self) {
@@ -1682,8 +1689,11 @@ mod tests {
         let mut p = Plugin::spawn(Path::new("/usr/bin/id")).unwrap();
         p.max_restarts = 1;
         p.backoff_ms = 60_000;
-        std::thread::sleep(Duration::from_millis(100));
+        // wait for the real exit (std caches the status for later try_wait)
         let deadline = Instant::now() + Duration::from_secs(5);
+        while p.child.try_wait().unwrap().is_none() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
         let mut reports = Vec::new();
         while Instant::now() < deadline && p.state != PluginState::Backoff {
             p.pump();
@@ -1698,6 +1708,23 @@ mod tests {
         }
         assert_eq!(p.state, PluginState::Backoff, "{reports:?}");
         assert_eq!(reports, vec!["exited: exit status: 0".to_string()]);
+    }
+
+    #[test]
+    fn a_violation_while_stopping_is_kept_for_the_reap_report() {
+        let mut p = Plugin::spawn(Path::new("/bin/cat")).unwrap();
+        p.stop_for_protocol(); // disable: Stopping, no reason, no retry
+        p.fail_protocol("unauthorized launcher request");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while p.state != PluginState::Failed && Instant::now() < deadline {
+            p.service();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let report = p.failure.take().unwrap_or_default();
+        assert!(
+            report.starts_with("protocol violation: unauthorized launcher request; exited:"),
+            "{report:?}"
+        );
     }
 
     #[test]
