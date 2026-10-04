@@ -1226,6 +1226,11 @@ impl Plugin {
     }
 
     pub fn fail_protocol(&mut self, reason: &str) {
+        // already down: pump saw the exit, then decoded bytes the dead child
+        // left behind; one stop is one report (and Backoff stays Backoff)
+        if !self.alive {
+            return;
+        }
         self.stop_reason
             .get_or_insert_with(|| format!("protocol violation: {reason}"));
         self.stop_child();
@@ -1668,6 +1673,31 @@ mod tests {
             reports[0].ends_with("exited: exit status: 1"),
             "{reports:?}"
         );
+    }
+
+    #[test]
+    fn junk_left_by_an_exited_child_is_not_a_second_report() {
+        // `id` prints well over 28 non-frame bytes and exits 0: pump sees the
+        // exit first, then decodes the junk as an oversized frame.
+        let mut p = Plugin::spawn(Path::new("/usr/bin/id")).unwrap();
+        p.max_restarts = 1;
+        p.backoff_ms = 60_000;
+        std::thread::sleep(Duration::from_millis(100));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut reports = Vec::new();
+        while Instant::now() < deadline && p.state != PluginState::Backoff {
+            p.pump();
+            p.service();
+            reports.extend(p.failure.take());
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        for _ in 0..20 {
+            p.pump();
+            p.service();
+            reports.extend(p.failure.take());
+        }
+        assert_eq!(p.state, PluginState::Backoff, "{reports:?}");
+        assert_eq!(reports, vec!["exited: exit status: 0".to_string()]);
     }
 
     #[test]

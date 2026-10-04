@@ -69,9 +69,13 @@ v1 plugin can never mistake them for a selection. Its payload is a tag byte:
 `1` button pressed + `u32` index, `2` search text changed + UTF-8, `3` prompt
 submitted + UTF-8, `4` tree row expand + `u32` index, `5` collapse + `u32`
 index. Kind-1 lists never receive `WIDGET_INPUT`. Both event types echo the
-widget's `resource_id` and `resource_revision`. Drop events with a stale
-revision. The plugin owns tree expansion and filtering, and re-sends the
-widget with a higher revision.
+widget's `resource_id` and `resource_revision`. Drop index-bearing events
+(select, button, expand, collapse) whose revision is stale, because the index
+may name another row. Always apply search-changed and prompt-submitted: they
+carry the full text and no index. The plugin owns tree expansion and
+filtering, and re-sends the widget with a higher revision. When a search was
+active, closing the pane (Esc or Ctrl+T) sends search-changed with empty
+text, so the plugin's filter matches the cleared input on the next open.
 
 A `WIDGET` frame with flag `0x1` is the **Ctrl+T explorer/action surface**.
 It never auto-opens. Ctrl+T focuses the lowest-id flagged widget of the first

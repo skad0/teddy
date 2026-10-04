@@ -1791,8 +1791,15 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                     };
                     let sel = (widget_sel as u32).to_le_bytes();
                     match k {
-                        Key::Esc => mode = Mode::Edit,
-                        Key::Ctrl(b'T') if explorer => mode = Mode::Edit,
+                        Key::Esc | Key::Ctrl(b'T') if k == Key::Esc || explorer => {
+                            // the plugin still filters by the last text it got;
+                            // reset it so a reopened pane matches the empty input
+                            if searchable && !widget_input.is_empty() {
+                                p.send(&tagged(plugin::IN_SEARCH, b""));
+                            }
+                            widget_input.clear();
+                            mode = Mode::Edit;
+                        }
                         Key::Up | Key::Left if kind == plugin::W_ACTIONS || k == Key::Up => {
                             widget_sel = widget_sel.saturating_sub(1)
                         }
