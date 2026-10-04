@@ -29,6 +29,7 @@ are reserved v1 types:
 | 11 | `LAUNCHER_REQUEST` | manager → core |
 | 12 | `LAUNCHER_RESPONSE` | core → manager |
 | 13 | `LAUNCHER_EVENT` | core → manager |
+| 14 | `WIDGET_INPUT` | core → plugin |
 
 The core sends `HELLO` with the four-byte little-endian protocol version.
 Plugins must reply with the same valid `HELLO` within two seconds. Contributions
@@ -40,6 +41,71 @@ and `Failed`. Unexpected failures use a bounded geometric retry schedule based
 on persisted `backoff_ms` (`base`, `4×base`, `16×base`), with at most
 `max_restarts` retries; `max_restarts: 0` disables retries. Invalid frames and
 unauthorized launcher requests stop the offending slot.
+
+## Widgets and structured input (spec §14.3)
+
+`WIDGET` (4) carries data only; the core owns layout, drawing, and keys. The
+payload is `kind: u8`, then `cols: u8` for tables only, then `count: u16`,
+then per item (`depth: u8`, `flags: u8` for trees only) and a `u16`-length
+UTF-8 string. Every string is control-sanitized. Each of the following is a
+protocol violation that stops the slot: an unknown kind, a wrong shape,
+trailing bytes, an unknown `WIDGET` frame flag, an unknown tree flag bit, or
+a tree row flagged expanded without children. Core-side prompt and search text
+is capped at 4 KiB.
+
+| Kind | Name | Items | Keys |
+|---:|---|---|---|
+| 1 | list | rows | ↑/↓, Enter selects |
+| 2 | tree | rows; flags `0x1` has children, `0x2` expanded; depth ≤ 32 | ↑/↓, Enter selects, →/← expand/collapse, typing searches |
+| 3 | table | `cols` header cells, then whole rows (`count % cols == 0`) | ↑/↓ over body rows, Enter selects, typing searches |
+| 4 | text | lines | ↑/↓ scroll |
+| 5 | log | lines; the tail is shown | — |
+| 6 | prompt | exactly one label | typing edits, Enter submits |
+| 7 | actions | button labels on one row | ←/→ (or ↑/↓), Enter presses |
+
+Selection keeps its v1 form: `WIDGET_EVENT` (5) with a `u32` row index (a body
+row for tables). The other inputs use `WIDGET_INPUT` (14, core → plugin), so a
+v1 plugin can never mistake them for a selection. Its payload is a tag byte:
+`1` button pressed + `u32` index, `2` search text changed + UTF-8, `3` prompt
+submitted + UTF-8, `4` tree row expand + `u32` index, `5` collapse + `u32`
+index. Kind-1 lists never receive `WIDGET_INPUT`. Both event types echo the
+widget's `resource_id` and `resource_revision`. Drop index-bearing events
+(select, button, expand, collapse) whose revision is stale, because the index
+may name another row. Always apply search-changed and prompt-submitted: they
+carry the full text and no index. The plugin owns tree expansion and
+filtering, and re-sends the widget with a higher revision. When a search was
+active, closing the pane (Esc or Ctrl+T) sends search-changed with empty
+text, so the plugin's filter matches the cleared input on the next open.
+
+A `WIDGET` frame with flag `0x1` is the **Ctrl+T explorer/action surface**.
+It never auto-opens. Ctrl+T focuses the lowest-id flagged widget of the first
+running plugin that has one, in the fixed bottom slot. Unflagged widgets keep
+the v1 behavior: the newest one opens over the editor area.
+
+Each unexpected stop records its reason: the protocol violation, a missing
+HELLO, a closed or failed pipe, or the exit status. It records the last
+post-HELLO stderr lines with it. The core moves both into the bottom **jobs**
+pane and opens that pane (spec §14.4). The statusline keeps a one-line notice.
+
+## Dev JSON-lines bridge
+
+`teddy-json-bridge` is a dev-only adapter. The production core never speaks
+JSON. Register the bridge as the plugin executable, and set
+`TEDDY_JSON_PLUGIN` to an absolute JSON-lines plugin executable. The bridge
+runs that executable with no arguments. Each frame is one JSON object per
+line:
+`{"type", "flags", "request_id", "resource_id", "resource_revision"}` (missing
+numbers are `0`) plus one payload field:
+
+* `"text"`: UTF-8.
+* `"hex"`: raw bytes.
+* `"widget"`: plugin to core only, as
+  `{"kind", "cols", "items": [...], "tree": [[depth, flags], ...]}`. It is
+  validated with the core's own parser.
+
+Core frames arrive as `"text"` when the payload is printable UTF-8, otherwise
+as `"hex"`. A malformed line goes to stderr and ends the bridge, so it shows up
+in the jobs pane.
 
 ## Launcher lane
 
@@ -134,8 +200,9 @@ control characters, including C0, C1, ESC, and DEL. Pre-HELLO stderr is not
 shown as a notice. Oversized or malformed normal frames are rejected.
 
 The existing messages remain unchanged: `REGISTER_COMMAND`, `COMMAND_INVOKE`,
-`VIEWPORT`, `SPANS`, `WIDGET`, `EDIT_TX`, `EDIT_RESULT`, and `STATUS` retain
-their v1 meanings and payloads documented by the source implementation.
+`VIEWPORT`, `SPANS`, `EDIT_TX`, `EDIT_RESULT`, and `STATUS` retain their v1
+meanings and payloads documented by the source implementation. `WIDGET` keeps
+the kind-1 list payload and adds the kinds above.
 The `VIEWPORT` name field is the buffer's display name: the file's basename
 with control, C1, invalid UTF-8, and backslash bytes escaped as literal
 `\xNN` (the same text shown in the tab), not the raw path bytes. Since `\`

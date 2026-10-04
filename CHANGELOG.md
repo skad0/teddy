@@ -11,6 +11,13 @@ Semantic Versioning.
 - Panics write a crash log with a backtrace to
   `$XDG_STATE_HOME/teddy/crash-<pid>.log` (default `~/.local/state`) and print
   its path after the terminal is restored (spec §20).
+- Plugin widget kinds: tree, table, text, log, prompt, and actions. Structured
+  inputs other than selection travel on the new `WIDGET_INPUT` message (14).
+- A Ctrl+T explorer/action pane in a fixed bottom slot, provided by a plugin
+  through a `WIDGET` frame flagged explorer.
+- A bottom jobs pane showing plugin failure details (reason, exit status,
+  stderr tail) and save/search outcomes, toggled with the `jobs` command.
+- The dev-only `teddy-json-bridge` JSON-lines ↔ binary protocol adapter.
 
 ## [0.2.0]
 

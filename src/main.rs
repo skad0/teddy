@@ -7,6 +7,7 @@ mod input;
 #[allow(dead_code)] // wrapped into S8 plugin executables
 mod lex;
 mod lines;
+mod pane;
 mod picker;
 mod plugin;
 mod plugin_registry;
@@ -458,6 +459,33 @@ fn bundled_spans_allowed(is_bundled: bool, configured_viewport: bool) -> bool {
     !is_bundled || !configured_viewport
 }
 
+/// Rows of the fixed bottom slot (title row included); 0 when nothing shows.
+fn bottom_slot_rows(editor_area: usize, shown: bool) -> usize {
+    if !shown || editor_area < 4 {
+        0
+    } else {
+        (editor_area / 3).clamp(3, 12)
+    }
+}
+
+/// Focus is on the plugin's Ctrl+T explorer widget (bottom slot).
+fn explorer_focused(mode: Mode, plugins: &[plugin::Plugin]) -> bool {
+    matches!(mode, Mode::PluginWidget { plugin, widget }
+        if plugins.get(plugin).and_then(|p| p.widgets.get(&widget)).is_some_and(|w| w.explorer))
+}
+
+const JOBS_CAP: usize = 200;
+/// Prompt/search text bound; far below `MAX_PAYLOAD` so a paste can't
+/// overflow a `WIDGET_INPUT` frame.
+const WIDGET_INPUT_CAP: usize = 4096;
+
+fn jobs_push(jobs: &mut plugin::Widget, line: String) {
+    if jobs.items.len() == JOBS_CAP {
+        jobs.items.remove(0);
+    }
+    jobs.items.push(line);
+}
+
 fn invalidate_plugin(
     slot: usize,
     generation: u64,
@@ -724,6 +752,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("save-as", "save-as <path>"),
     ("reload", "reload from disk"),
     ("follow", "toggle follow mode"),
+    ("jobs", "toggle the jobs pane"),
     ("quit", "quit"),
 ];
 
@@ -771,6 +800,15 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
     let mut palette_sel = 0usize;
     let mut pick_top = 0usize;
     let mut widget_sel = 0usize;
+    // prompt text / search text typed into a focused plugin widget
+    let mut widget_input = String::new();
+    // spec §14.4 bottom jobs pane: a core-owned log widget holding plugin
+    // failure details and save/search outcomes; live progress rides its title.
+    let mut jobs = plugin::Widget {
+        kind: plugin::W_LOG,
+        ..plugin::Widget::default()
+    };
+    let mut jobs_open = false;
     let mut plugins: Vec<plugin::Plugin> = Vec::new();
     let mut next_plugin_request = 1u32;
     let mut viewport_spans: Vec<Vec<(u16, u16, u8)>> = Vec::new();
@@ -1036,13 +1074,6 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
             if !plugin_ready.get(i).copied().unwrap_or(false) {
                 continue;
             }
-            let before_count = plugins[i].widgets.len();
-            let before_max_revision = plugins[i]
-                .widgets
-                .values()
-                .map(|w| w.revision)
-                .max()
-                .unwrap_or(0);
             let before_wants_viewport = plugins[i].wants_viewport;
             let frames = plugins[i].pump();
             let mut plugin_dirty = !frames.is_empty();
@@ -1099,25 +1130,28 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                     _ => {}
                 }
             }
-            if plugins[i].widgets.len() != before_count
-                || plugins[i]
-                    .widgets
-                    .values()
-                    .any(|w| w.revision > before_max_revision)
-            {
+            let changed = std::mem::take(&mut plugins[i].changed_widgets);
+            if !changed.is_empty() {
                 plugin_dirty = true;
-                if mode == Mode::Edit {
-                    if let Some((&widget, _)) =
-                        plugins[i].widgets.iter().max_by_key(|(_, w)| w.revision)
-                    {
-                        widget_sel = 0;
-                        mode = Mode::PluginWidget { plugin: i, widget };
-                    }
+                // the newest changed widget auto-opens; the Ctrl+T explorer never does
+                let opened = changed
+                    .iter()
+                    .rev()
+                    .copied()
+                    .find(|id| plugins[i].widgets.get(id).is_some_and(|w| !w.explorer));
+                if let (Mode::Edit, Some(widget)) = (mode, opened) {
+                    widget_sel = 0;
+                    widget_input.clear();
+                    mode = Mode::PluginWidget { plugin: i, widget };
                 }
             }
             if !plugins[i].alive {
                 status_msg.clear();
-                let _ = write!(status_msg, "{}: plugin stopped", plugins[i].name);
+                let _ = write!(
+                    status_msg,
+                    "{}: plugin stopped (details: jobs)",
+                    plugins[i].name
+                );
                 plugin_dirty = true;
             }
             for notice in plugins[i].notices.drain(..) {
@@ -1139,13 +1173,36 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
             &mut dirty,
         );
 
+        for p in &mut plugins {
+            if let Some(reason) = p.failure.take() {
+                // a dead child's last words are still in the pipe (its fd is
+                // no longer polled): read to EOF, bounded
+                let mut left = 64 * 1024usize;
+                while left > 0 {
+                    let n = p.drain_stderr(left);
+                    if n == 0 {
+                        break;
+                    }
+                    left = left.saturating_sub(n);
+                }
+                status_msg.clear();
+                let _ = write!(status_msg, "{}: plugin stopped (details: jobs)", p.name);
+                jobs_push(&mut jobs, format!("{}: {reason}", p.name));
+                for line in p.stderr_tail.drain(..) {
+                    jobs_push(&mut jobs, format!("{}: {line}", p.name));
+                }
+                jobs_open = true;
+                dirty = true;
+            }
+        }
+
         // Launcher control is intentionally handled only after every ready
         // plugin has drained its normal v1 frames for this tick.
         for (source_index, frame) in launcher_frames.drain(..) {
             let authorized =
                 manager_index == Some(source_index) && plugins[source_index].manager_capable();
             if !authorized {
-                plugins[source_index].stop_for_protocol();
+                plugins[source_index].fail_protocol("unauthorized launcher request");
                 continue;
             }
             let request = match plugin::decode_launcher_request(&frame) {
@@ -1295,7 +1352,10 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
             &mut dirty,
         );
 
-        let editor_rows = rows.saturating_sub(2).max(1) as u64;
+        let editor_area = rows.saturating_sub(2).max(1) as usize;
+        let editor_rows = (editor_area
+            - bottom_slot_rows(editor_area, jobs_open || explorer_focused(mode, &plugins)))
+            as u64;
         for k in keys.drain(..) {
             dirty = true;
             status_msg.clear();
@@ -1555,6 +1615,7 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                                             let _ = write!(status_msg, "save failed: {e}");
                                         }
                                     }
+                                    jobs_push(&mut jobs, status_msg.clone());
                                 }
                                 Some("save-as") => {
                                     if arg.is_empty() {
@@ -1580,6 +1641,7 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                                                 let _ = write!(status_msg, "save failed: {e}");
                                             }
                                         }
+                                        jobs_push(&mut jobs, status_msg.clone());
                                     }
                                 }
                                 Some("reload") => {
@@ -1614,6 +1676,7 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                                         status_msg.push_str("follow off");
                                     }
                                 }
+                                Some("jobs") => jobs_open = !jobs_open,
                                 Some("quit") => {
                                     if buffers.iter().any(|b| b.modified()) {
                                         mode = Mode::ConfirmQuit;
@@ -1692,34 +1755,87 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                     continue;
                 }
                 Mode::PluginWidget { plugin: pi, widget } => {
-                    let item_count = plugins
-                        .get(pi)
-                        .and_then(|p| p.widgets.get(&widget))
-                        .map(|w| w.items.len())
-                        .unwrap_or(0);
+                    let Some(p) = plugins.get_mut(pi) else {
+                        mode = Mode::Edit;
+                        continue;
+                    };
+                    let Some(w) = p.widgets.get(&widget) else {
+                        mode = Mode::Edit;
+                        continue;
+                    };
+                    let (kind, revision, explorer) = (w.kind, w.revision, w.explorer);
+                    let n = pane::selectable(w);
+                    widget_sel = widget_sel.min(n.saturating_sub(1));
+                    let foldable = w
+                        .tree
+                        .get(widget_sel)
+                        .is_some_and(|&(_, f)| f & plugin::TREE_HAS_CHILDREN != 0);
+                    let expanded = w
+                        .tree
+                        .get(widget_sel)
+                        .is_some_and(|&(_, f)| f & plugin::TREE_EXPANDED != 0);
+                    // v1 list widgets keep their exact v1 input surface
+                    let searchable = matches!(kind, plugin::W_TREE | plugin::W_TABLE);
+                    let event = |msg_type, payload: Vec<u8>| plugin::Frame {
+                        msg_type,
+                        flags: 0,
+                        request_id: 0,
+                        resource_id: widget,
+                        resource_revision: revision,
+                        payload,
+                    };
+                    let tagged = |tag: u8, data: &[u8]| {
+                        let mut payload = vec![tag];
+                        payload.extend_from_slice(data);
+                        event(plugin::WIDGET_INPUT, payload)
+                    };
+                    let sel = (widget_sel as u32).to_le_bytes();
                     match k {
-                        Key::Esc => mode = Mode::Edit,
-                        Key::Up => widget_sel = widget_sel.saturating_sub(1),
-                        Key::Down => {
-                            widget_sel = (widget_sel + 1).min(item_count.saturating_sub(1));
+                        Key::Esc | Key::Ctrl(b'T') if k == Key::Esc || explorer => {
+                            // the plugin still filters by the last text it got;
+                            // reset it so a reopened pane matches the empty input
+                            if searchable && !widget_input.is_empty() {
+                                p.send(&tagged(plugin::IN_SEARCH, b""));
+                            }
+                            widget_input.clear();
+                            mode = Mode::Edit;
                         }
-                        Key::Enter => {
-                            if item_count > 0 {
-                                widget_sel = widget_sel.min(item_count - 1);
-                                if let Some(p) = plugins.get_mut(pi) {
-                                    p.send(&plugin::Frame {
-                                        msg_type: plugin::WIDGET_EVENT,
-                                        flags: 0,
-                                        request_id: 0,
-                                        resource_id: widget,
-                                        resource_revision: p
-                                            .widgets
-                                            .get(&widget)
-                                            .map(|w| w.revision)
-                                            .unwrap_or(0),
-                                        payload: (widget_sel as u32).to_le_bytes().to_vec(),
-                                    });
-                                }
+                        Key::Up | Key::Left if kind == plugin::W_ACTIONS || k == Key::Up => {
+                            widget_sel = widget_sel.saturating_sub(1)
+                        }
+                        Key::Down | Key::Right if kind == plugin::W_ACTIONS || k == Key::Down => {
+                            widget_sel = (widget_sel + 1).min(n.saturating_sub(1));
+                        }
+                        Key::Right if foldable && !expanded => {
+                            p.send(&tagged(plugin::IN_EXPAND, &sel))
+                        }
+                        Key::Left if foldable && expanded => {
+                            p.send(&tagged(plugin::IN_COLLAPSE, &sel))
+                        }
+                        Key::Enter => match kind {
+                            plugin::W_PROMPT => {
+                                p.send(&tagged(plugin::IN_PROMPT, widget_input.as_bytes()));
+                                widget_input.clear();
+                            }
+                            plugin::W_ACTIONS if n > 0 => p.send(&tagged(plugin::IN_BUTTON, &sel)),
+                            plugin::W_LIST | plugin::W_TREE | plugin::W_TABLE if n > 0 => {
+                                p.send(&event(plugin::WIDGET_EVENT, sel.to_vec()))
+                            }
+                            _ => {}
+                        },
+                        Key::Char(c) if widget_input.len() + c.len_utf8() > WIDGET_INPUT_CAP => {}
+                        Key::Char(c) if kind == plugin::W_PROMPT || searchable => {
+                            widget_input.push(c);
+                            if searchable {
+                                widget_sel = 0;
+                                p.send(&tagged(plugin::IN_SEARCH, widget_input.as_bytes()));
+                            }
+                        }
+                        Key::Backspace if kind == plugin::W_PROMPT || searchable => {
+                            widget_input.pop();
+                            if searchable {
+                                widget_sel = 0;
+                                p.send(&tagged(plugin::IN_SEARCH, widget_input.as_bytes()));
                             }
                         }
                         _ => {}
@@ -1746,6 +1862,28 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                     prompt.clear();
                     palette_sel = 0;
                     mode = Mode::Palette;
+                }
+                Key::Ctrl(b'T') => {
+                    last_edit_kind = KIND_NONE;
+                    // spec §1: the explorer/action surface exists only when a
+                    // plugin provides one (a WIDGET frame flagged explorer)
+                    let found = plugins.iter().enumerate().find_map(|(i, p)| {
+                        let id = p
+                            .widgets
+                            .iter()
+                            .filter(|(_, w)| w.explorer)
+                            .map(|(&id, _)| id)
+                            .min()?;
+                        p.alive.then_some((i, id))
+                    });
+                    match found {
+                        Some((plugin, widget)) => {
+                            widget_sel = 0;
+                            widget_input.clear();
+                            mode = Mode::PluginWidget { plugin, widget };
+                        }
+                        None => status_msg.push_str("no explorer plugin"),
+                    }
                 }
                 Key::Ctrl(b'O') => {
                     last_edit_kind = KIND_NONE;
@@ -1801,6 +1939,7 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                             pending_force_save = false;
                         }
                     }
+                    jobs_push(&mut jobs, status_msg.clone());
                 }
                 Key::Ctrl(b'Z') => {
                     last_edit_kind = KIND_NONE;
@@ -1882,6 +2021,7 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
         }
 
         // cooperative work slice (spec §18): runs only when input is idle
+        let job_was_running = search_job.is_some() || replace_job.is_some();
         if !term::poll_stdin(&[], &mut idle_ready, 0)? {
             if let Some(s) = &mut search_job {
                 let buf = &mut buffers[active];
@@ -1947,8 +2087,21 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                 dirty = true;
             }
         }
+        if job_was_running && search_job.is_none() && replace_job.is_none() {
+            let outcome = if status_msg.is_empty() {
+                "search: found"
+            } else {
+                &status_msg
+            };
+            jobs_push(&mut jobs, outcome.to_owned());
+        }
 
         if dirty && !term::poll_stdin(&[], &mut idle_ready, 0)? {
+            // fixed bottom slot (spec §1 layout): explorer when focused, else jobs
+            let slot = bottom_slot_rows(editor_area, jobs_open || explorer_focused(mode, &plugins));
+            // too small for a slot: the explorer draws as the center overlay
+            let explorer = explorer_focused(mode, &plugins) && slot > 0;
+            let editor_rows = (editor_area - slot) as u64;
             let buf = &mut buffers[active];
             let cursor_screen = build_view(
                 buf,
@@ -2046,23 +2199,37 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                 }
                 Mode::PluginWidget { plugin: pi, widget } => {
                     status_left.clear();
-                    if let Some(p) = plugins.get(pi) {
-                        let _ = write!(status_left, " {} widget  Enter select  Esc close", p.name);
-                    } else {
-                        status_left.push_str(" plugin widget  Enter select  Esc close");
+                    let w = plugins.get(pi).and_then(|p| p.widgets.get(&widget));
+                    let hint = match w.map(|w| w.kind) {
+                        Some(plugin::W_TREE) => "Enter select  ←/→ fold  type: search  Esc close",
+                        Some(plugin::W_TABLE) => "Enter select  type: search  Esc close",
+                        Some(plugin::W_PROMPT) => "type, Enter submit  Esc close",
+                        Some(plugin::W_ACTIONS) => "←/→ choose  Enter press  Esc close",
+                        Some(plugin::W_TEXT | plugin::W_LOG) => "Esc close",
+                        _ => "Enter select  Esc close",
+                    };
+                    let name = plugins.get(pi).map_or("plugin", |p| p.name.as_str());
+                    let _ = write!(status_left, " {name}  {hint}");
+                    if !widget_input.is_empty() && w.is_some_and(|w| w.kind != plugin::W_PROMPT) {
+                        let _ = write!(status_left, "  / {widget_input}");
                     }
-                    for i in 0..editor_rows as usize {
-                        row_store[i].clear();
-                        row_sel[i] = None;
-                        if let Some(item) = plugins
-                            .get(pi)
-                            .and_then(|p| p.widgets.get(&widget))
-                            .and_then(|w| w.items.get(i))
-                        {
-                            row_store[i].extend_from_slice(item.as_bytes());
-                            if i == widget_sel {
-                                row_sel[i] = Some((0, row_store[i].len()));
+                    if !status_msg.is_empty() {
+                        let _ = write!(status_left, "  — {status_msg}");
+                    }
+                    if !explorer {
+                        // legacy center overlay over the editor rows
+                        let er = editor_rows as usize;
+                        match w {
+                            Some(w) => {
+                                widget_sel = pane::draw(
+                                    w,
+                                    widget_sel,
+                                    &widget_input,
+                                    &mut row_store[..er],
+                                    &mut row_sel[..er],
+                                )
                             }
+                            None => row_store.iter_mut().for_each(Vec::clear),
                         }
                     }
                 }
@@ -2083,6 +2250,41 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                         let _ = write!(status_left, "  — {status_msg}");
                     }
                 }
+            }
+            let er = editor_rows as usize;
+            if slot > 0 {
+                row_store.resize_with(er + slot, Vec::new);
+                row_sel.resize(er + slot, None);
+                let (title, body) = row_store[er..].split_first_mut().expect("slot >= 3");
+                let body_sel = &mut row_sel[er + 1..];
+                title.clear();
+                let focused = match mode {
+                    Mode::PluginWidget { plugin: pi, widget } if explorer => plugins
+                        .get(pi)
+                        .and_then(|p| Some((p.name.as_str(), p.widgets.get(&widget)?))),
+                    _ => None,
+                };
+                match focused {
+                    Some((name, w)) => {
+                        let _ = write!(title, " explorer: {name}");
+                        widget_sel = pane::draw(w, widget_sel, &widget_input, body, body_sel);
+                    }
+                    None => {
+                        title.extend_from_slice(b" jobs");
+                        let len = buffers[active].len();
+                        if let Some(s) = &search_job {
+                            let _ = write!(title, "  searching {}%", s.progress(len));
+                        } else if let Some(j) = &replace_job {
+                            let _ = write!(title, "  replacing {}%", j.progress(len));
+                        } else if let Some(ib) = &buffers[active].index_build {
+                            let _ = write!(title, "  indexing {}%", ib.pos * 100 / len.max(1));
+                        }
+                        title.extend_from_slice(b"  (palette: jobs to close)");
+                        pane::draw(&jobs, 0, "", body, body_sel);
+                    }
+                }
+                title.resize(title.len().max(cols as usize), b' ');
+                row_sel[er] = Some((0, title.len()));
             }
             // rebuild the owned tab snapshot only on change (no per-paint alloc)
             let tabs_stale = tabs_buf.len() != buffers.len()
@@ -2131,7 +2333,17 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                 active_tab: active,
                 row_bytes: &row_store,
                 row_sel: &row_sel,
-                row_spans: if valid_spans { &viewport_spans } else { &[] },
+                row_spans: if valid_spans {
+                    &viewport_spans[..viewport_spans.len().min(er)]
+                } else {
+                    &[]
+                },
+                // pane rows ignore horizontal scroll; the center overlay owns all rows
+                plain_from: if matches!(mode, Mode::PluginWidget { .. }) && !explorer {
+                    0
+                } else {
+                    er
+                },
                 left_col: buffers[active].left_col,
                 cursor_screen,
                 status_left: &status_left,
@@ -2147,7 +2359,7 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                 buffers[active].top_line,
                 buffers[active].top_byte,
                 cols,
-                rows,
+                rows - slot as u16,
                 buffers[active].name.clone(),
             );
             if mode == Mode::Edit
@@ -2157,7 +2369,7 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                 // Overlays own row_store outside Edit mode, so VIEWPORT frames are only
                 // sent for real buffer rows. Rows are clipped again in the protocol payload.
                 viewport_seq = viewport_seq.wrapping_add(1);
-                let payload = viewport_payload(&buffers[active].name, &row_store);
+                let payload = viewport_payload(&buffers[active].name, &row_store[..er]);
                 for p in plugins.iter_mut().filter(|p| p.alive && p.wants_viewport) {
                     p.send(&plugin::Frame {
                         msg_type: plugin::VIEWPORT,

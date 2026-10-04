@@ -24,6 +24,8 @@ pub const SPANS: u16 = 10;
 pub const LAUNCHER_REQUEST: u16 = 11;
 pub const LAUNCHER_RESPONSE: u16 = 12;
 pub const LAUNCHER_EVENT: u16 = 13;
+/// Core → plugin structured widget input other than item selection.
+pub const WIDGET_INPUT: u16 = 14;
 
 const HEADER_LEN: usize = 28;
 // Per-tick pipe budget: a flooding plugin yields to input/paint and is polled again next tick.
@@ -109,6 +111,7 @@ impl Default for LifecycleModel {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Frame {
     pub msg_type: u16,
     pub flags: u16,
@@ -651,49 +654,121 @@ fn take8(bytes: &[u8]) -> Result<[u8; 8], ProtoError> {
     bytes.try_into().map_err(|_| ProtoError::Malformed)
 }
 
+/// Core widget kinds (spec §14.3). The plugin supplies data only; layout,
+/// drawing, and input stay in the core.
+pub const W_LIST: u8 = 1;
+pub const W_TREE: u8 = 2;
+pub const W_TABLE: u8 = 3;
+pub const W_TEXT: u8 = 4;
+pub const W_LOG: u8 = 5;
+pub const W_PROMPT: u8 = 6;
+pub const W_ACTIONS: u8 = 7;
+
+/// `WIDGET` frame flag: this widget is the Ctrl+T explorer/action surface.
+pub const WIDGET_FLAG_EXPLORER: u16 = 0x1;
+/// Tree row flags.
+pub const TREE_HAS_CHILDREN: u8 = 0x1;
+pub const TREE_EXPANDED: u8 = 0x2;
+const TREE_MAX_DEPTH: u8 = 32;
+
+/// `WIDGET_INPUT` (type 14) payload tags. Item selection keeps using
+/// `WIDGET_EVENT` with its v1 `u32` payload; the other structured inputs get
+/// their own message type so v1 plugins can never misread them as a select.
+pub const IN_BUTTON: u8 = 1;
+pub const IN_SEARCH: u8 = 2;
+pub const IN_PROMPT: u8 = 3;
+pub const IN_EXPAND: u8 = 4;
+pub const IN_COLLAPSE: u8 = 5;
+
 #[allow(dead_code)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Widget {
     pub kind: u8,
+    /// Set from `WIDGET_FLAG_EXPLORER` on the carrying frame.
+    pub explorer: bool,
+    /// Table column count; the first `cols` items are the header row.
+    pub cols: u8,
     pub items: Vec<String>,
+    /// Tree only: `(depth, flags)` per item.
+    pub tree: Vec<(u8, u8)>,
     pub revision: u64,
 }
 
+/// Payload: `kind u8`, `[cols u8 if table]`, `count u16`, then per item
+/// `[depth u8, flags u8 if tree]` and a `u16`-length UTF-8 string.
 #[allow(dead_code)]
 pub fn parse_widget(payload: &[u8]) -> Option<Widget> {
-    if payload.len() < 3 {
+    let (&kind, mut rest) = payload.split_first()?;
+    if !(W_LIST..=W_ACTIONS).contains(&kind) {
         return None;
     }
-
-    let kind = payload[0];
-    let count = u16::from_le_bytes(payload[1..3].try_into().ok()?) as usize;
-    let mut at = 3;
-    let mut items = Vec::with_capacity(count);
+    let mut cols = 0;
+    if kind == W_TABLE {
+        let (&c, r) = rest.split_first()?;
+        cols = c;
+        rest = r;
+    }
+    let count = u16::from_le_bytes(rest.get(..2)?.try_into().ok()?) as usize;
+    let mut at = 2;
+    let mut items = Vec::with_capacity(count.min(rest.len()));
+    let mut tree = Vec::new();
 
     for _ in 0..count {
-        if at + 2 > payload.len() {
-            return None;
+        if kind == W_TREE {
+            let meta = rest.get(at..at + 2)?;
+            let (depth, flags) = (meta[0], meta[1]);
+            let known = TREE_HAS_CHILDREN | TREE_EXPANDED;
+            if depth > TREE_MAX_DEPTH
+                || flags & !known != 0
+                || flags & (TREE_HAS_CHILDREN | TREE_EXPANDED) == TREE_EXPANDED
+            {
+                return None;
+            }
+            tree.push((meta[0], meta[1]));
+            at += 2;
         }
-        let len = u16::from_le_bytes(payload[at..at + 2].try_into().ok()?) as usize;
+        let len = u16::from_le_bytes(rest.get(at..at + 2)?.try_into().ok()?) as usize;
         at += 2;
-        if at + len > payload.len() {
-            return None;
-        }
-        let item = std::str::from_utf8(&payload[at..at + len])
-            .ok()?
-            .to_string();
-        items.push(sanitize_control_bytes(item));
+        let item = std::str::from_utf8(rest.get(at..at + len)?).ok()?;
+        items.push(sanitize_control_bytes(item.to_string()));
         at += len;
     }
 
-    if at != payload.len() {
+    let shape_ok = match kind {
+        W_TABLE => cols > 0 && count >= cols as usize && count % cols as usize == 0,
+        W_PROMPT => count == 1,
+        _ => true,
+    };
+    if at != rest.len() || !shape_ok {
         return None;
     }
 
     Some(Widget {
         kind,
+        cols,
         items,
-        revision: 0,
+        tree,
+        ..Widget::default()
     })
+}
+
+/// Inverse of `parse_widget`, for plugins, tests, and the dev JSON bridge.
+#[allow(dead_code)]
+pub fn encode_widget(w: &Widget) -> Vec<u8> {
+    let mut out = vec![w.kind];
+    if w.kind == W_TABLE {
+        out.push(w.cols);
+    }
+    out.extend_from_slice(&(w.items.len() as u16).to_le_bytes());
+    for (i, item) in w.items.iter().enumerate() {
+        if w.kind == W_TREE {
+            let (depth, flags) = w.tree.get(i).copied().unwrap_or((0, 0));
+            out.extend_from_slice(&[depth, flags]);
+        }
+        out.extend_from_slice(&(item.len() as u16).to_le_bytes());
+        out.extend_from_slice(item.as_bytes());
+    }
+    out
 }
 
 pub fn parse_spans(payload: &[u8]) -> Option<Vec<(u16, Vec<(u16, u16, u8)>)>> {
@@ -750,7 +825,17 @@ pub struct Plugin {
     pub alive: bool,
     pub commands: Vec<String>,
     pub widgets: HashMap<u64, Widget>,
+    /// Widget ids accepted since the core last drained this (repaint/auto-open).
+    pub changed_widgets: Vec<u64>,
     pub notices: Vec<String>,
+    /// Why the slot last stopped unexpectedly; the core takes it for the
+    /// jobs pane (spec §14.4). Survives `clear_contributions`.
+    pub failure: Option<String>,
+    /// Rolling post-HELLO stderr lines, kept across cleanup as failure detail.
+    pub stderr_tail: Vec<String>,
+    /// Why a `Stopping` child was killed; published into `failure` with its
+    /// exit status once reaped, so one stop is one report.
+    stop_reason: Option<String>,
     pub wants_viewport: bool,
     hello_ok: bool,
     pub source: PluginSource,
@@ -808,7 +893,11 @@ impl Plugin {
             alive: true,
             commands: Vec::new(),
             widgets: HashMap::new(),
+            changed_widgets: Vec::new(),
             notices: Vec::new(),
+            failure: None,
+            stderr_tail: Vec::new(),
+            stop_reason: None,
             wants_viewport: false,
             hello_ok: false,
             source,
@@ -833,7 +922,7 @@ impl Plugin {
 
     pub fn send(&mut self, f: &Frame) {
         if send_frame_to(&mut self.stdin, f).is_err() {
-            self.fail_unexpected();
+            self.fail_unexpected("write to plugin failed");
         }
     }
 
@@ -859,7 +948,7 @@ impl Plugin {
             let read_cap = (PUMP_READ_BUDGET - read_total).min(buf.len());
             match self.stdout.read(&mut buf[..read_cap]) {
                 Ok(0) => {
-                    self.fail_unexpected();
+                    self.fail_unexpected("plugin closed stdout");
                     break;
                 }
                 Ok(n) => {
@@ -869,7 +958,7 @@ impl Plugin {
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                 Err(_) => {
-                    self.fail_unexpected();
+                    self.fail_unexpected("read from plugin failed");
                     break;
                 }
             }
@@ -883,7 +972,7 @@ impl Plugin {
                                 || u32::from_le_bytes(frame.payload[0..4].try_into().unwrap())
                                     != PROTO_VERSION
                             {
-                                self.stop_child();
+                                self.fail_protocol("bad HELLO");
                                 break;
                             }
                             self.hello_ok = true;
@@ -898,7 +987,7 @@ impl Plugin {
                     }
                     Ok(None) => break,
                     Err(_) => {
-                        self.stop_child();
+                        self.fail_protocol("malformed frame");
                         break;
                     }
                 }
@@ -913,6 +1002,10 @@ impl Plugin {
     }
 
     pub fn restart(&mut self) -> io::Result<()> {
+        // a reload must not swallow a stop the core has not reported yet
+        if let Some(reason) = self.stop_reason.take() {
+            self.publish_failure(reason);
+        }
         let _ = self.child.kill();
         match self.child.try_wait()? {
             Some(_) => {}
@@ -951,6 +1044,10 @@ impl Plugin {
         self.commands.clear();
         self.widgets.clear();
         self.notices.clear();
+        if self.failure.is_none() {
+            // keep the tail while its failure is still unreported
+            self.stderr_tail.clear();
+        }
         self.wants_viewport = false;
         self.hello_ok = false;
         self.state = PluginState::Starting;
@@ -990,13 +1087,19 @@ impl Plugin {
     pub fn clear_contributions(&mut self) {
         self.commands.clear();
         self.widgets.clear();
+        self.changed_widgets.clear();
         self.notices.clear();
         self.wants_viewport = false;
     }
 
     fn service_process(&mut self) {
         if !self.alive && self.state == PluginState::Stopping {
-            if self.child.try_wait().ok().flatten().is_some() {
+            // ponytail: a child that never reaps after SIGKILL keeps its reason
+            // unpublished; only a kernel-level hang gets here.
+            if let Some(status) = self.child.try_wait().ok().flatten() {
+                if let Some(reason) = self.stop_reason.take() {
+                    self.publish_failure(format!("{reason}; exited: {status}"));
+                }
                 if self.retry_after_reap {
                     self.retry_after_reap = false;
                     self.schedule_retry();
@@ -1009,16 +1112,31 @@ impl Plugin {
         if !self.alive {
             return;
         }
-        if self.child.try_wait().ok().flatten().is_some() {
+        if let Some(status) = self.child.try_wait().ok().flatten() {
+            self.publish_failure(format!("exited: {status}"));
             self.alive = false;
             self.clear_contributions();
             self.schedule_retry();
         } else if !self.hello_ok && Instant::now() >= self.hello_deadline {
-            self.fail_unexpected();
+            self.fail_unexpected("no HELLO within 2s");
         }
     }
 
-    fn fail_unexpected(&mut self) {
+    /// Append to an unreported failure rather than overwrite it.
+    fn publish_failure(&mut self, line: String) {
+        self.failure = Some(match self.failure.take() {
+            Some(prev) => format!("{prev}; {line}"),
+            None => line,
+        });
+    }
+
+    fn fail_unexpected(&mut self, reason: &str) {
+        // already down (e.g. pump saw the exit, then read the EOF it left):
+        // re-entering Stopping would report the same death twice
+        if !self.alive {
+            return;
+        }
+        self.stop_reason.get_or_insert_with(|| reason.to_owned());
         self.alive = false;
         self.state = PluginState::Stopping;
         self.retry_after_reap = true;
@@ -1051,6 +1169,12 @@ impl Plugin {
                     if !self.hello_ok {
                         continue;
                     }
+                    for line in buf[..n].split(|&b| b == b'\n').filter(|l| !l.is_empty()) {
+                        if self.stderr_tail.len() == NOTICE_CAP {
+                            self.stderr_tail.remove(0);
+                        }
+                        self.stderr_tail.push(sanitize_stderr(line));
+                    }
                     let text = sanitize_stderr(&buf[..n]);
                     if !text.is_empty() {
                         if self.notices.len() == NOTICE_CAP {
@@ -1073,19 +1197,20 @@ impl Plugin {
                 if let Ok(command) = String::from_utf8(frame.payload) {
                     self.commands.push(command);
                 } else {
-                    self.stop_child();
+                    self.fail_protocol("non-UTF-8 command");
                 }
             }
-            WIDGET => {
-                if !update_widget(
-                    &mut self.widgets,
-                    frame.resource_id,
-                    frame.resource_revision,
-                    &frame.payload,
-                ) {
-                    self.stop_child();
-                }
-            }
+            WIDGET => match update_widget(
+                &mut self.widgets,
+                frame.resource_id,
+                frame.resource_revision,
+                frame.flags,
+                &frame.payload,
+            ) {
+                None => self.fail_protocol("invalid widget frame"),
+                Some(true) => self.changed_widgets.push(frame.resource_id),
+                Some(false) => {}
+            },
             STATUS => {
                 if let Ok(notice) = String::from_utf8(frame.payload) {
                     if self.notices.len() == NOTICE_CAP {
@@ -1093,10 +1218,28 @@ impl Plugin {
                     }
                     self.notices.push(sanitize_control_bytes(notice));
                 } else {
-                    self.stop_child();
+                    self.fail_protocol("non-UTF-8 status");
                 }
             }
             _ => out.push(frame),
+        }
+    }
+
+    pub fn fail_protocol(&mut self, reason: &str) {
+        let reason = || format!("protocol violation: {reason}");
+        match (self.alive, self.state) {
+            // being killed (e.g. just disabled): keep the violation for the
+            // reap report, but don't re-stop, which would cancel a retry
+            (false, PluginState::Stopping) => {
+                self.stop_reason.get_or_insert_with(reason);
+            }
+            // already reaped and reported (pump saw the exit, then decoded
+            // bytes the dead child left): one stop is one report
+            (false, _) => {}
+            (true, _) => {
+                self.stop_reason.get_or_insert_with(reason);
+                self.stop_child();
+            }
         }
     }
 
@@ -1172,16 +1315,21 @@ fn update_widget(
     widgets: &mut HashMap<u64, Widget>,
     id: u64,
     revision: u64,
+    flags: u16,
     payload: &[u8],
-) -> bool {
-    let Some(mut widget) = parse_widget(payload) else {
-        return false;
-    };
+) -> Option<bool> {
+    // None: protocol violation; Some(accepted) otherwise (stale drops are false)
+    if flags & !WIDGET_FLAG_EXPLORER != 0 {
+        return None;
+    }
+    let mut widget = parse_widget(payload)?;
     if widgets.get(&id).map_or(true, |old| revision > old.revision) {
         widget.revision = revision;
+        widget.explorer = flags & WIDGET_FLAG_EXPLORER != 0;
         widgets.insert(id, widget);
+        return Some(true);
     }
-    true
+    Some(false)
 }
 
 #[cfg(test)]
@@ -1308,24 +1456,13 @@ mod tests {
     #[test]
     fn stale_widget_revision_is_dropped() {
         let mut widgets = HashMap::new();
-        assert!(update_widget(&mut widgets, 1, 2, &widget_payload(&["new"])));
-        assert_eq!(widgets.get(&1).unwrap().items, vec!["new".to_string()]);
-
-        assert!(update_widget(
-            &mut widgets,
-            1,
-            1,
-            &widget_payload(&["stale"])
-        ));
-        assert_eq!(widgets.get(&1).unwrap().revision, 2);
-        assert_eq!(widgets.get(&1).unwrap().items, vec!["new".to_string()]);
-
-        assert!(update_widget(
-            &mut widgets,
-            1,
-            3,
-            &widget_payload(&["newer"])
-        ));
+        let mut update =
+            |rev, flags, item| update_widget(&mut widgets, 1, rev, flags, &widget_payload(&[item]));
+        assert_eq!(update(2, 0, "new"), Some(true));
+        assert_eq!(update(1, 0, "stale"), Some(false));
+        assert_eq!(update(3, 0, "newer"), Some(true));
+        // unknown frame flag bits are a protocol violation
+        assert_eq!(update(4, 0x2, "x"), None);
         assert_eq!(widgets.get(&1).unwrap().revision, 3);
         assert_eq!(widgets.get(&1).unwrap().items, vec!["newer".to_string()]);
     }
@@ -1520,6 +1657,97 @@ mod tests {
         assert_eq!(model.attempts, 0);
     }
 
+    /// Spawn a throwaway script plugin. It sleeps first so `spawn` can always
+    /// write HELLO; a child that exits at once races it to EPIPE on Linux.
+    fn spawn_script(name: &str, body: &str) -> Plugin {
+        use std::os::unix::fs::PermissionsExt;
+        let path = std::env::temp_dir().join(format!("teddy-{}-{name}", std::process::id()));
+        std::fs::write(&path, format!("#!/bin/sh\nsleep 0.2\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // Linux ETXTBSY: a test thread forking right now inherits our write
+        // fd until its exec; retry briefly instead of failing.
+        for _ in 0..100 {
+            match Plugin::spawn(&path) {
+                Err(e) if e.kind() == io::ErrorKind::ExecutableFileBusy => {
+                    std::thread::sleep(Duration::from_millis(10))
+                }
+                result => return result.unwrap(),
+            }
+        }
+        panic!("{} stayed busy", path.display());
+    }
+
+    #[test]
+    fn a_crash_is_published_once_with_its_exit_status() {
+        // exits 1 without HELLO: EOF/kill reason and the reaped status must
+        // arrive as one report, never as two.
+        let mut p = spawn_script("crash", "exit 1");
+        p.max_restarts = 0;
+        // let it exit first: pump then sees the exit *and* the EOF it leaves
+        std::thread::sleep(Duration::from_millis(100));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut reports = Vec::new();
+        while Instant::now() < deadline && p.state != PluginState::Failed {
+            p.pump();
+            p.service();
+            reports.extend(p.failure.take());
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(p.state, PluginState::Failed);
+        assert_eq!(reports.len(), 1, "{reports:?}");
+        assert_eq!(reports[0].matches("exited:").count(), 1, "{reports:?}");
+        assert!(
+            reports[0].ends_with("exited: exit status: 1"),
+            "{reports:?}"
+        );
+    }
+
+    #[test]
+    fn junk_left_by_an_exited_child_is_not_a_second_report() {
+        // prints well over 28 non-frame bytes and exits 0: pump sees the exit
+        // first, then decodes the junk as an oversized frame.
+        let junk = "echo 'not a teddy plugin, only plain text output on stdout'";
+        let mut p = spawn_script("junk", junk);
+        p.max_restarts = 1;
+        p.backoff_ms = 60_000;
+        // wait for the real exit (std caches the status for later try_wait)
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while p.child.try_wait().unwrap().is_none() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let mut reports = Vec::new();
+        while Instant::now() < deadline && p.state != PluginState::Backoff {
+            p.pump();
+            p.service();
+            reports.extend(p.failure.take());
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        for _ in 0..20 {
+            p.pump();
+            p.service();
+            reports.extend(p.failure.take());
+        }
+        assert_eq!(p.state, PluginState::Backoff, "{reports:?}");
+        assert_eq!(reports, vec!["exited: exit status: 0".to_string()]);
+    }
+
+    #[test]
+    fn a_violation_while_stopping_is_kept_for_the_reap_report() {
+        let mut p = Plugin::spawn(Path::new("/bin/cat")).unwrap();
+        p.stop_for_protocol(); // disable: Stopping, no reason, no retry
+        p.fail_protocol("unauthorized launcher request");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while p.state != PluginState::Failed && Instant::now() < deadline {
+            p.service();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let report = p.failure.take().unwrap_or_default();
+        assert!(
+            report.starts_with("protocol violation: unauthorized launcher request; exited:"),
+            "{report:?}"
+        );
+    }
+
     #[test]
     fn contribution_cleanup_is_explicit() {
         // The lifecycle cleanup contract is exercised by the same method used
@@ -1528,9 +1756,8 @@ mod tests {
         widgets.insert(
             1,
             Widget {
-                kind: 0,
-                items: Vec::new(),
                 revision: 1,
+                ..Widget::default()
             },
         );
         assert_eq!(widgets.len(), 1);

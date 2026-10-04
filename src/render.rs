@@ -93,6 +93,8 @@ pub struct View<'a> {
     /// Highlight spans per visible row as byte offsets into row_bytes before horizontal trim.
     pub row_spans: &'a [Vec<(u16, u16, u8)>],
     pub left_col: usize,
+    /// Rows from this index on are core panes: no horizontal scroll, no spans.
+    pub plain_from: usize,
     /// Screen cursor position, 0-based within the editor area.
     pub cursor_screen: (u16, u16),
     pub status_left: &'a str,
@@ -367,12 +369,18 @@ pub fn paint(f: &mut FrameBuf, cache: &mut RenderCache, v: &View) {
 
     // editor rows: emit only rows whose content hash changed
     for r in 0..editor_rows {
+        let plain = r >= v.plain_from;
+        let left = if plain { 0 } else { v.left_col };
+        let spans: &[(u16, u16, u8)] = match v.row_spans.get(r) {
+            Some(spans) if !plain => spans,
+            _ => &[],
+        };
         let mut h = FNV_OFFSET;
-        fnv(&mut h, &(v.left_col as u64).to_le_bytes());
+        fnv(&mut h, &(left as u64).to_le_bytes());
         match v.row_bytes.get(r) {
             Some(bytes) => {
                 fnv(&mut h, bytes);
-                if let Some(spans) = v.row_spans.get(r) {
+                {
                     for &(start, len, style) in spans {
                         fnv(&mut h, &start.to_le_bytes());
                         fnv(&mut h, &len.to_le_bytes());
@@ -393,10 +401,10 @@ pub fn paint(f: &mut FrameBuf, cache: &mut RenderCache, v: &View) {
                 Some(bytes) => emit_row(
                     b,
                     bytes,
-                    v.left_col,
+                    left,
                     v.cols as usize,
                     v.row_sel.get(r).copied().flatten(),
-                    v.row_spans.get(r).map_or(&[], Vec::as_slice),
+                    spans,
                 ),
                 None => b.extend_from_slice(b"\x1b[K"),
             }
@@ -608,6 +616,7 @@ mod tests {
             row_sel: &sels,
             row_spans: &[],
             left_col: 0,
+            plain_from: usize::MAX,
             cursor_screen: (2, 1),
             status_left: " a.txt *",
             status_right: "Ln 2, Col 3 ",
@@ -641,5 +650,33 @@ mod tests {
             s3.contains("CHANGED!") && !s3.contains("line one"),
             "{s3:?}"
         );
+    }
+
+    #[test]
+    fn pane_rows_ignore_horizontal_scroll_and_spans() {
+        let mut f = FrameBuf::new();
+        let mut cache = RenderCache::new();
+        let rows = vec![b"0123456789".to_vec(), b"pane text".to_vec()];
+        let sels = vec![None; 2];
+        let spans = vec![vec![(0, 10, 1)], vec![(0, 9, 1)]];
+        let v = View {
+            cols: 40,
+            rows: 4,
+            tabs: &[],
+            active_tab: 0,
+            row_bytes: &rows,
+            row_sel: &sels,
+            row_spans: &spans,
+            left_col: 4,
+            plain_from: 1,
+            cursor_screen: (0, 0),
+            status_left: "",
+            status_right: "",
+        };
+        paint(&mut f, &mut cache, &v);
+        let s = String::from_utf8_lossy(f.as_bytes()).into_owned();
+        // editor row scrolled and styled; pane row unscrolled, unstyled
+        assert!(s.contains("\x1b[2;1H\x1b[0m\x1b[35m456789"), "{s:?}");
+        assert!(s.contains("\x1b[3;1Hpane text\x1b[K"), "{s:?}");
     }
 }
