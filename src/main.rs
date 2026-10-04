@@ -688,6 +688,39 @@ mod startup_tests {
         assert_eq!(warning.as_deref(), Some("directory sync warning"));
         assert!(durability_warning(RegistrySaveOutcome::Durable).is_none());
     }
+
+    #[test]
+    fn tab_lifecycle_labels_new_and_close() {
+        use super::{close_tab, new_tab, tab_label};
+        use crate::buffer::Buffer;
+        let open = |p: &str| Buffer::open(Path::new(p)).unwrap(); // absent: new-file buffers
+        let mut bufs = vec![
+            open("/nx-teddy/a/mod.rs"),
+            open("/nx-teddy/b/mod.rs"),
+            open("/nx-teddy/c/x.rs"),
+        ];
+        assert_eq!(tab_label(&bufs, 0), "a/mod.rs");
+        assert_eq!(tab_label(&bufs, 1), "b/mod.rs");
+        assert_eq!(tab_label(&bufs, 2), "x.rs");
+        // every buffer gets a session-unique revision: a stale plugin frame
+        // keyed by a shifted index can never match its new occupant
+        assert_ne!(bufs[0].revision, bufs[1].revision);
+
+        assert_eq!(new_tab(&mut bufs), 3);
+        assert_eq!(new_tab(&mut bufs), 4);
+        assert_eq!(bufs[3].name, "untitled");
+        assert_eq!(bufs[4].name, "untitled-2");
+
+        assert_eq!(close_tab(&mut bufs, 0, None), 0);
+        assert_eq!(tab_label(&bufs, 0), "mod.rs");
+        assert_eq!(close_tab(&mut bufs, 3, None), 2); // last tab: focus moves left
+        while bufs.len() > 1 {
+            close_tab(&mut bufs, 0, None);
+        }
+        assert_eq!(close_tab(&mut bufs, 0, None), 0); // never empty
+        assert_eq!(bufs.len(), 1);
+        assert!(bufs[0].path.is_none());
+    }
 }
 
 /// Cap on bytes read per rendered row / prefix scan.
@@ -699,6 +732,8 @@ const LINE_CAP: usize = 256 * 1024;
 enum Mode {
     Edit,
     ConfirmQuit,
+    /// Ctrl+W on a modified tab.
+    ConfirmClose,
     /// Statusline text prompt (find / replace flows).
     Prompt(PromptKind),
     /// Interactive replace: a match is highlighted, or the search job is
@@ -720,6 +755,8 @@ const COMMANDS: &[(&str, &str)] = &[
     ("goto", "goto <line>"),
     ("open", "open <path>"),
     ("tab", "tab <n|next|prev>"),
+    ("new", "new empty tab (Ctrl+N)"),
+    ("close", "close tab (Ctrl+W)"),
     ("save", "save"),
     ("save-as", "save-as <path>"),
     ("reload", "reload from disk"),
@@ -810,6 +847,8 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
     let mut idle_ready = Vec::new();
     // owned tab snapshot, rebuilt only when a name/modified flag changes
     let mut tabs_buf: Vec<(String, bool)> = Vec::new();
+    // staleness key for tabs_buf: labels derive from every buffer's name+path
+    let mut tabs_key: Vec<(String, Option<PathBuf>)> = Vec::new();
     let mut out = std::io::stdout().lock();
     #[cfg(feature = "perf")]
     let mut perf = perf::Perf::from_env();
@@ -1323,6 +1362,28 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                     }
                     continue;
                 }
+                Mode::ConfirmClose => {
+                    mode = Mode::Edit;
+                    let close = match k {
+                        Key::Char('y') | Key::Char('Y') => true,
+                        Key::Char('s') | Key::Char('S') => match buffers[active].save(false) {
+                            Ok(()) => true,
+                            Err(e) => {
+                                let _ = write!(status_msg, "save failed: {e} — use save-as");
+                                false
+                            }
+                        },
+                        _ => false,
+                    };
+                    if close {
+                        search_job = None;
+                        replace_job = None;
+                        confirm_match = None;
+                        pending_force_save = false;
+                        active = close_tab(buffers, active, watcher.as_mut());
+                    }
+                    continue;
+                }
                 Mode::Prompt(kind) => {
                     match k {
                         // 64 KiB cap keeps one search slice within budget
@@ -1540,6 +1601,22 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                                         }
                                     }
                                 },
+                                Some("new") => {
+                                    search_job = None;
+                                    replace_job = None;
+                                    confirm_match = None;
+                                    active = new_tab(buffers);
+                                }
+                                Some("close") => {
+                                    if buffers[active].modified() {
+                                        mode = Mode::ConfirmClose;
+                                    } else {
+                                        search_job = None;
+                                        replace_job = None;
+                                        confirm_match = None;
+                                        active = close_tab(buffers, active, watcher.as_mut());
+                                    }
+                                }
                                 Some("save") => {
                                     let buf = &mut buffers[active];
                                     match buf.save(false) {
@@ -1773,6 +1850,22 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                         mode = Mode::Prompt(PromptKind::ReplaceNeedle);
                     }
                 }
+                Key::Ctrl(b'N') => {
+                    last_edit_kind = KIND_NONE;
+                    replace_job = None;
+                    confirm_match = None;
+                    active = new_tab(buffers);
+                }
+                Key::Ctrl(b'W') => {
+                    last_edit_kind = KIND_NONE;
+                    if buffers[active].modified() {
+                        mode = Mode::ConfirmClose;
+                    } else {
+                        replace_job = None;
+                        confirm_match = None;
+                        active = close_tab(buffers, active, watcher.as_mut());
+                    }
+                }
                 Key::Ctrl(b'Q') => {
                     if buffers.iter().any(|b| b.modified()) {
                         mode = Mode::ConfirmQuit;
@@ -1965,6 +2058,10 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                     status_left.clear();
                     status_left.push_str(" Unsaved changes — y: quit  s: save all & quit  n: back");
                 }
+                Mode::ConfirmClose => {
+                    status_left.clear();
+                    status_left.push_str(" Unsaved changes — y: close  s: save & close  n: back");
+                }
                 Mode::Prompt(PromptKind::Find) => {
                     status_left.clear();
                     let _ = write!(status_left, " Find: {prompt}");
@@ -2085,14 +2182,18 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                 }
             }
             // rebuild the owned tab snapshot only on change (no per-paint alloc)
-            let tabs_stale = tabs_buf.len() != buffers.len()
-                || tabs_buf
-                    .iter()
-                    .zip(buffers.iter())
-                    .any(|(t, b)| t.0 != b.name || t.1 != b.modified());
+            let tabs_stale =
+                tabs_key.len() != buffers.len()
+                    || tabs_buf.iter().zip(&tabs_key).zip(buffers.iter()).any(
+                        |((t, (n, p)), b)| t.1 != b.modified() || *n != b.name || *p != b.path,
+                    );
             if tabs_stale {
                 tabs_buf.clear();
-                tabs_buf.extend(buffers.iter().map(|b| (b.name.clone(), b.modified())));
+                tabs_buf.extend(
+                    (0..buffers.len()).map(|i| (tab_label(buffers, i), buffers[i].modified())),
+                );
+                tabs_key.clear();
+                tabs_key.extend(buffers.iter().map(|b| (b.name.clone(), b.path.clone())));
             }
             sweep_plugin_edges(
                 &mut plugins,
@@ -2213,6 +2314,61 @@ fn collect_palette_matches<'a>(
             }
         }
     }
+}
+
+/// Tab label: the buffer name, or `parent/name` when another tab shares it.
+/// ponytail: one parent level; same parent name in two trees still collides.
+fn tab_label(buffers: &[Buffer], i: usize) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    let b = &buffers[i];
+    let dup = buffers
+        .iter()
+        .enumerate()
+        .any(|(j, o)| j != i && o.name == b.name);
+    let parent = b
+        .path
+        .as_deref()
+        .and_then(Path::parent)
+        .and_then(Path::file_name);
+    match parent {
+        Some(parent) if dup => format!("{}/{}", render::escape_name(parent.as_bytes()), b.name),
+        _ => b.name.clone(),
+    }
+}
+
+/// Ctrl+N: append an empty pathless tab; returns its index.
+fn new_tab(buffers: &mut Vec<Buffer>) -> usize {
+    let mut b = Buffer::untitled();
+    let mut n = 1;
+    while buffers.iter().any(|o| o.name == b.name) {
+        n += 1;
+        b.name = format!("untitled-{n}");
+    }
+    buffers.push(b);
+    buffers.len() - 1
+}
+
+/// Remove tab `k`, keeping at least one (an untitled) buffer. Watch tokens
+/// are buffer indices, so every shifted buffer is re-armed under its new
+/// index; plugin frames keyed by index are fenced by session-unique
+/// revisions. Returns the new active index.
+fn close_tab(buffers: &mut Vec<Buffer>, k: usize, watcher: Option<&mut watch::Watcher>) -> usize {
+    let old_len = buffers.len();
+    buffers.remove(k);
+    if buffers.is_empty() {
+        buffers.push(Buffer::untitled());
+    }
+    if let Some(w) = watcher {
+        for t in k..old_len {
+            w.unwatch(t as u64);
+        }
+        for (t, b) in buffers.iter().enumerate().skip(k) {
+            if let Some(p) = &b.path {
+                let _ = w.watch(t as u64, p); // new-file buffers: not on disk yet
+            }
+        }
+    }
+    k.min(buffers.len() - 1)
 }
 
 fn resolve_builtin_command(tok: &str) -> Option<&'static str> {

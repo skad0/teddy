@@ -8,6 +8,11 @@ Semantic Versioning.
 
 ### Added
 
+- Tab lifecycle: Ctrl+W (palette `close`) closes the active tab, asking
+  first when it has unsaved changes; Ctrl+N (palette `new`) opens an empty
+  tab. The tabline scrolls to keep the active tab visible, shows
+  `‹ n more` / `n more ›` overflow markers, and labels duplicate basenames
+  as `parent/name` (spec §1).
 - Panics write a crash log with a backtrace to
   `$XDG_STATE_HOME/teddy/crash-<pid>.log` (default `~/.local/state`) and print
   its path after the terminal is restored (spec §20).

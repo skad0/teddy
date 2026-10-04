@@ -6,6 +6,14 @@ use crate::storage::{AddStore, OriginalFile, Piece, PieceChain, Src};
 use std::io;
 use std::path::{Path, PathBuf};
 
+/// Session-wide revision source: buffer indices shift when a tab closes, so a
+/// plugin frame's (index, revision) pair must never match a different buffer.
+static NEXT_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn next_revision() -> u64 {
+    NEXT_REVISION.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 pub const HUGE_THRESHOLD: u64 = 256 * 1024 * 1024;
 const BINARY_SNIFF: usize = 8 * 1024;
 /// Byte window used to reconstruct rows in huge/unindexed files.
@@ -127,7 +135,7 @@ impl Buffer {
                 None
             },
             index_build: None,
-            revision: 0,
+            revision: next_revision(),
             path,
             name,
             readonly: false,
@@ -342,7 +350,7 @@ impl Buffer {
             after_id: self.state_id,
         });
         self.redo.clear();
-        self.revision += 1;
+        self.revision = next_revision();
         if self.index_build.is_some() {
             // ponytail: an edit invalidates the partial scan; restart —
             // build slices are fast and edits-during-open are rare
@@ -438,7 +446,7 @@ impl Buffer {
             }
             self.cursor = e.cursor_before.min(self.len());
             self.state_id = e.before_id;
-            self.revision += 1;
+            self.revision = next_revision();
         }
         if self.index_build.is_some() {
             // undo/redo mutates content like any edit: restart the scan

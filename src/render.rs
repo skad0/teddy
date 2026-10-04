@@ -344,22 +344,55 @@ pub fn paint(f: &mut FrameBuf, cache: &mut RenderCache, v: &View) {
         cache.tab_hash = th;
         b.extend_from_slice(b"\x1b[H");
         b.extend_from_slice(THEME.chrome_on);
+        let cols = v.cols as usize;
+        let labels: Vec<String> = v
+            .tabs
+            .iter()
+            .map(|(name, modified)| {
+                format!(
+                    "{}{}",
+                    escape_chrome(name.as_bytes()),
+                    if *modified { "*" } else { "" }
+                )
+            })
+            .collect();
+        let widths: Vec<usize> = labels.iter().map(|l| label_width(l)).collect();
+        let (lo, hi) = tab_window(&widths, v.active_tab, cols);
+        let mut right = if hi < labels.len() {
+            format!(" {} more ›", labels.len() - hi)
+        } else {
+            String::new()
+        };
+        if marker_width(&right) + label_width("") > cols {
+            right.clear(); // too narrow: the active tab wins over the marker
+        }
         let mut col = 0usize;
-        for (i, (name, modified)) in v.tabs.iter().enumerate() {
-            let name = escape_chrome(name.as_bytes());
-            let star = if *modified { "*" } else { "" };
-            let label_len = name.len() + star.len() + 4;
-            if col + label_len > v.cols as usize {
-                break;
+        if lo > 0 {
+            let left = format!("‹ {} more ", lo);
+            if marker_width(&left) + marker_width(&right) + label_width("") <= cols {
+                col += marker_width(&left);
+                b.extend_from_slice(left.as_bytes());
             }
+        }
+        for (i, label) in labels.iter().enumerate().take(hi).skip(lo) {
+            let room = cols.saturating_sub(col + marker_width(&right));
+            if room < label_width("") {
+                break; // terminal narrower than one decorated label
+            }
+            // only an active label wider than the screen is ever cut
+            let label = cut_label(label, room - label_width(""));
             if i == v.active_tab {
                 b.extend_from_slice(THEME.active_on);
-                let _ = write!(b, " [{}{}] ", name, star);
+                let _ = write!(b, " [{}] ", label);
                 b.extend_from_slice(THEME.active_off);
             } else {
-                let _ = write!(b, "  {}{}  ", name, star);
+                let _ = write!(b, "  {}  ", label);
             }
-            col += label_len;
+            col += label_width(label);
+        }
+        if !right.is_empty() && col + marker_width(&right) <= cols {
+            col += marker_width(&right);
+            b.extend_from_slice(right.as_bytes());
         }
         pad(b, (v.cols as usize).saturating_sub(col));
         b.extend_from_slice(THEME.chrome_off);
@@ -458,6 +491,61 @@ fn truncated(s: &str, max: usize) -> &str {
     }
 }
 
+/// Cells a tab label takes, decorations included. ponytail: byte length —
+/// over-counts non-ASCII, never overflows; Seq 44's width table swaps in here.
+fn label_width(label: &str) -> usize {
+    label.len() + 4
+}
+
+/// Overflow markers are ASCII plus one `‹`/`›` cell.
+fn marker_width(marker: &str) -> usize {
+    marker.chars().count()
+}
+
+fn cut_label(label: &str, max: usize) -> &str {
+    if label.len() <= max {
+        return label;
+    }
+    let mut end = max;
+    while !label.is_char_boundary(end) {
+        end -= 1;
+    }
+    &label[..end]
+}
+
+/// Visible tab range `lo..hi` for a strip `cols` wide: everything when it
+/// fits, else a window that always holds `active`, leaving room for the
+/// `‹ n more ` / ` n more ›` markers. Stateless: the strip starts at tab 0
+/// until the active tab would fall off, then the active tab sits at the
+/// right edge and the window grows rightwards over any slack.
+pub fn tab_window(widths: &[usize], active: usize, cols: usize) -> (usize, usize) {
+    let n = widths.len();
+    // " {n} more ›" / "‹ {n} more ": digits + 8 cells
+    let marker = |hidden: usize| {
+        if hidden == 0 {
+            0
+        } else {
+            hidden.ilog10() as usize + 1 + 8
+        }
+    };
+    let total: usize = widths.iter().sum();
+    if n == 0 || total <= cols {
+        return (0, n);
+    }
+    let active = active.min(n - 1);
+    let (mut lo, mut hi) = (0, active + 1);
+    let mut used: usize = widths[..hi].iter().sum();
+    while lo < active && used + marker(lo) + marker(n - hi) > cols {
+        used -= widths[lo];
+        lo += 1;
+    }
+    while hi < n && used + widths[hi] + marker(lo) + marker(n - hi - 1) <= cols {
+        used += widths[hi];
+        hi += 1;
+    }
+    (lo, hi)
+}
+
 fn pad(b: &mut Vec<u8>, n: usize) {
     for _ in 0..n {
         b.push(b' ');
@@ -467,6 +555,90 @@ fn pad(b: &mut Vec<u8>, n: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tabline_never_exceeds_cols() {
+        let tabs: Vec<(String, bool)> = (0..10)
+            .map(|i| (format!("long-file-name-{i}.rs"), i == 9))
+            .collect();
+        for cols in [1u16, 4, 9, 10, 13, 20, 40, 80] {
+            for active in [0, 5, 9] {
+                let v = View {
+                    cols,
+                    rows: 3,
+                    tabs: &tabs,
+                    active_tab: active,
+                    row_bytes: &[],
+                    row_sel: &[],
+                    row_spans: &[],
+                    left_col: 0,
+                    cursor_screen: (0, 0),
+                    status_left: "",
+                    status_right: "",
+                };
+                let (mut f, mut c) = (FrameBuf::new(), RenderCache::new());
+                paint(&mut f, &mut c, &v);
+                let out = String::from_utf8_lossy(f.as_bytes()).into_owned();
+                let row = out
+                    .split("\x1b[H")
+                    .nth(1)
+                    .unwrap()
+                    .split("\x1b[2;")
+                    .next()
+                    .unwrap();
+                let mut cells = 0;
+                let mut esc = false;
+                for ch in row.chars() {
+                    match (esc, ch) {
+                        (false, '\x1b') => esc = true,
+                        (true, c) if c.is_ascii_alphabetic() => esc = false,
+                        (true, _) => {}
+                        (false, _) => cells += 1,
+                    }
+                }
+                assert!(
+                    cells <= cols as usize,
+                    "cols {cols} active {active}: {cells} {row:?}"
+                );
+                if cols >= 4 {
+                    assert!(row.contains(" ["), "active hidden: {row:?}");
+                }
+                if cols >= 80 {
+                    assert!(
+                        row.contains(&format!("[long-file-name-{active}.rs")),
+                        "{row:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tab_window_keeps_active_visible() {
+        let w = [10usize; 10];
+        let used = |(lo, hi): (usize, usize)| {
+            let m = |n: usize| {
+                if n == 0 {
+                    0
+                } else {
+                    format!(" {n} more ›").chars().count()
+                }
+            };
+            w[lo..hi].iter().sum::<usize>() + m(lo) + m(w.len() - hi)
+        };
+        assert_eq!(tab_window(&w, 3, 100), (0, 10)); // fits: no markers
+        for active in 0..10 {
+            for cols in [12, 30, 45, 99] {
+                let (lo, hi) = tab_window(&w, active, cols);
+                assert!(lo <= active && active < hi, "active {active} cols {cols}");
+                assert!(hi - lo == 1 || used((lo, hi)) <= cols);
+            }
+        }
+        assert_eq!(tab_window(&w, 0, 45), (0, 3)); // 30 + " 7 more ›" (9)
+        assert_eq!(tab_window(&w, 9, 45), (7, 10)); // "‹ 7 more " (9) + 30
+        assert_eq!(tab_window(&w, 5, 45), (4, 6)); // active at right edge, both markers
+        assert_eq!(tab_window(&[], 0, 45), (0, 0));
+    }
 
     fn row(bytes: &[u8], left: usize, width: usize) -> String {
         let mut out = Vec::new();
