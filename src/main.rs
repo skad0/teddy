@@ -757,6 +757,7 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
     let mut status_msg = String::new();
     let mut pending_force_save = false;
     let mut last_edit_kind = KIND_NONE;
+    let mut register = storage::Register::new();
     // find/replace state
     let mut prompt = String::new();
     let mut find_needle: Vec<u8> = Vec::new();
@@ -1818,6 +1819,74 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                     }
                     buf.group_counter += 1;
                 }
+                Key::Ctrl(b'A') => {
+                    last_edit_kind = KIND_NONE;
+                    let buf = &mut buffers[active];
+                    buf.sel_anchor = Some(0);
+                    buf.cursor = buf.len();
+                    update_goal(buf, &mut scratch);
+                }
+                Key::Ctrl(b'C') | Key::Ctrl(b'X') => {
+                    last_edit_kind = KIND_NONE;
+                    let buf = &mut buffers[active];
+                    let Some((s, e)) = buf.selection() else {
+                        status_msg.push_str("nothing selected");
+                        continue;
+                    };
+                    if let Err(er) = buf.copy_range(s, e, &mut register) {
+                        status_msg.push_str(er);
+                        continue;
+                    }
+                    if register.len as usize <= term::OSC52_CAP {
+                        scratch.clear();
+                        if (0..register.piece_count())
+                            .all(|i| register.read_piece(i, &mut scratch).is_ok())
+                        {
+                            let _ = term::osc52(&mut out, &scratch);
+                            let _ = write!(status_msg, "copied {} bytes", register.len);
+                        } else {
+                            let _ = write!(
+                                status_msg,
+                                "copied {} bytes (system clipboard: read error)",
+                                register.len
+                            );
+                        }
+                    } else {
+                        let _ = write!(
+                            status_msg,
+                            "copied {} bytes (too large for system clipboard)",
+                            register.len
+                        );
+                    }
+                    if k == Key::Ctrl(b'X') {
+                        buf.group_counter += 1;
+                        match buf.replace(s, e, b"", buf.group_counter) {
+                            Ok(()) => {
+                                buf.cursor = s;
+                                buf.sel_anchor = None;
+                                update_goal(buf, &mut scratch);
+                            }
+                            Err(er) => {
+                                status_msg.clear();
+                                status_msg.push_str(er);
+                            }
+                        }
+                    }
+                }
+                Key::Ctrl(b'V') => {
+                    last_edit_kind = KIND_NONE;
+                    let buf = &mut buffers[active];
+                    if register.len == 0 {
+                        status_msg.push_str("nothing to paste");
+                        continue;
+                    }
+                    let (s, e) = buf.selection().unwrap_or((buf.cursor, buf.cursor));
+                    buf.group_counter += 1;
+                    if let Err(er) = buf.paste(s, e, &register, buf.group_counter) {
+                        status_msg.push_str(er);
+                    }
+                    update_goal(buf, &mut scratch);
+                }
                 Key::Char(c) => {
                     let mut enc = [0u8; 4];
                     let s = c.encode_utf8(&mut enc);
@@ -1946,6 +2015,24 @@ fn run(buffers: &mut Vec<Buffer>, root: &Path) -> std::io::Result<()> {
                 buffers[active].step_index_build(4 * 1024 * 1024, &mut job_scratch);
                 dirty = true;
             }
+        }
+
+        // any edit path (paste, replace-all, plugin) can overflow undo
+        let mut dropped_any = false;
+        for b in buffers.iter_mut() {
+            if std::mem::take(&mut b.undo_dropped) {
+                if !dropped_any {
+                    status_msg.clear();
+                } else {
+                    status_msg.push_str(", ");
+                }
+                status_msg.push_str(&b.name);
+                dropped_any = true;
+            }
+        }
+        if dropped_any {
+            status_msg.push_str(": edit too large to undo");
+            dirty = true;
         }
 
         if dirty && !term::poll_stdin(&[], &mut idle_ready, 0)? {

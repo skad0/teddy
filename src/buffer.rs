@@ -2,7 +2,7 @@
 //! index + cursor/viewport state. Byte-addressed throughout (spec §5–§7).
 
 use crate::lines::LineIndex;
-use crate::storage::{AddStore, OriginalFile, Piece, PieceChain, Src};
+use crate::storage::{AddStore, OriginalFile, Piece, PieceChain, Register, Src};
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -21,6 +21,12 @@ pub struct IndexBuild {
 
 /// Files above this build their newline index cooperatively.
 const SYNC_INDEX_MAX: u64 = 8 * 1024 * 1024;
+
+/// Largest copy/paste, done synchronously in one key handler.
+/// ponytail: bigger selections are refused; a sliced job like
+/// `search::Search` lifts this if anyone needs >64 MiB clipboard ops.
+pub const REGISTER_CAP: u64 = 64 * 1024 * 1024;
+const REGISTER_CHUNK: u64 = 1024 * 1024;
 
 pub struct UndoEntry {
     pub start: u64,
@@ -66,6 +72,10 @@ pub struct Buffer {
     pub redo: Vec<UndoEntry>,
     pub undo_bytes: usize,
     pub group_counter: u64,
+    dropped_group: Option<u64>,
+    /// Set when an edit group was too large to keep undoable; the main
+    /// loop reports it once and clears it.
+    pub undo_dropped: bool,
     state_id: u64,
     saved_state_id: u64,
     next_state_id: u64,
@@ -146,6 +156,8 @@ impl Buffer {
             redo: Vec::new(),
             undo_bytes: 0,
             group_counter: 0,
+            dropped_group: None,
+            undo_dropped: false,
             state_id: 0,
             saved_state_id: 0,
             next_state_id: 1,
@@ -350,6 +362,71 @@ impl Buffer {
                 pos: 0,
                 newlines: Vec::new(),
             });
+        }
+        Ok(())
+    }
+
+    /// Copy [start, end) into a fresh register. `reg` is replaced only on
+    /// full success, so a cut never deletes text that failed to copy.
+    pub fn copy_range(
+        &mut self,
+        start: u64,
+        end: u64,
+        reg: &mut Register,
+    ) -> Result<(), &'static str> {
+        if end - start > REGISTER_CAP {
+            return Err("selection too large to copy (64 MiB cap)");
+        }
+        let prior_error = std::mem::replace(&mut self.io_error, false);
+        let mut fresh = Register::new();
+        let mut chunk = Vec::with_capacity(REGISTER_CHUNK.min(end - start) as usize);
+        let mut pos = start;
+        let mut result = Ok(());
+        while pos < end {
+            let take = REGISTER_CHUNK.min(end - pos);
+            chunk.clear();
+            self.read_range(pos, take, &mut chunk);
+            if self.io_error || chunk.len() as u64 != take {
+                result = Err("copy failed: read error");
+                break;
+            }
+            if fresh.push(&chunk).is_err() {
+                result = Err("copy failed: register write error");
+                break;
+            }
+            pos += take;
+        }
+        self.io_error |= prior_error;
+        if result.is_ok() {
+            *reg = fresh;
+        }
+        result
+    }
+
+    /// Replace [start, end) with the register contents, all in undo group
+    /// `group`. The cursor follows each chunk, so a mid-paste failure still
+    /// leaves it inside the buffer.
+    pub fn paste(
+        &mut self,
+        start: u64,
+        end: u64,
+        reg: &Register,
+        group: u64,
+    ) -> Result<(), &'static str> {
+        let mut chunk = Vec::new();
+        let mut at = start;
+        let mut del_end = end;
+        for i in 0..reg.piece_count() {
+            chunk.clear();
+            reg.read_piece(i, &mut chunk)
+                .map_err(|_| "paste failed: register read error")?;
+            // a mid-paste failure leaves a partial paste inside `group`;
+            // one undo reverts it
+            self.replace(at, del_end, &chunk, group)?;
+            at += chunk.len() as u64;
+            del_end = at;
+            self.cursor = at;
+            self.sel_anchor = None;
         }
         Ok(())
     }
@@ -561,14 +638,27 @@ impl Buffer {
     }
 
     fn push_undo(&mut self, e: UndoEntry) {
+        if self.dropped_group == Some(e.group) {
+            return; // rest of a group already given up on below
+        }
         self.undo_bytes += e.byte_cost;
+        let live_group = e.group;
         self.undo.push(e);
         const UNDO_CAP: usize = 8 * 1024 * 1024; // spec §8: fixed byte cap
                                                  // evict whole groups: dropping half a group would leave undo_group
                                                  // restoring a corrupted intermediate state
         while self.undo_bytes > UNDO_CAP && self.undo.len() > 1 {
             let victim_group = self.undo[0].group;
-            while self.undo.len() > 1 && self.undo[0].group == victim_group {
+            if victim_group == live_group {
+                // the group being built (chunked paste, replace-all) alone
+                // exceeds the cap: it becomes non-undoable, never half-undoable
+                self.undo.clear();
+                self.undo_bytes = 0;
+                self.dropped_group = Some(live_group);
+                self.undo_dropped = true;
+                break;
+            }
+            while self.undo[0].group == victim_group {
                 let dropped = self.undo.remove(0); // ponytail: O(n) shift, undo depth is small
                 self.undo_bytes -= dropped.byte_cost;
             }
@@ -968,5 +1058,68 @@ mod tests {
         let b = Buffer::open(&p).unwrap();
         assert_eq!(b.len(), 0);
         assert_eq!(b.line_count(), 1);
+    }
+
+    #[test]
+    fn register_round_trips_across_buffers_and_chunks() {
+        // > REGISTER_CHUNK so the register holds several pieces
+        let data: Vec<u8> = (0..(REGISTER_CHUNK as usize * 2 + 7))
+            .map(|i| (i % 251) as u8)
+            .collect();
+        let p = temp("register-src", &data);
+        let mut src = Buffer::open(&p).unwrap();
+        let mut reg = Register::new();
+        src.copy_range(3, data.len() as u64, &mut reg).unwrap();
+        assert_eq!(reg.piece_count(), 3);
+        let mut dst = Buffer::untitled();
+        dst.replace(0, 0, b"<>", 1).unwrap();
+        dst.paste(1, 1, &reg, 2).unwrap();
+        let mut want = b"<".to_vec();
+        want.extend_from_slice(&data[3..]);
+        want.push(b'>');
+        assert_eq!(dst.cursor, 1 + data.len() as u64 - 3);
+        assert_eq!(contents(&mut dst), want);
+        // one undo reverts the whole multi-chunk paste
+        assert!(dst.undo_group());
+        assert_eq!(contents(&mut dst), b"<>");
+        // pasting over a selection replaces it
+        dst.paste(0, 2, &reg, 3).unwrap();
+        assert_eq!(contents(&mut dst), &data[3..]);
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn oversized_copy_is_refused_and_keeps_the_register() {
+        let mut b = Buffer::untitled();
+        let mut reg = Register::new();
+        reg.push(b"keep").unwrap();
+        assert!(b.copy_range(0, REGISTER_CAP + 1, &mut reg).is_err());
+        assert_eq!(reg.len, 4);
+    }
+
+    #[test]
+    fn undo_cap_drops_an_oversized_group_whole() {
+        let mut b = Buffer::untitled();
+        let entry = |group, byte_cost| UndoEntry {
+            start: 0,
+            new_len: 0,
+            old_pieces: Vec::new(),
+            old_len: 0,
+            cursor_before: 0,
+            group,
+            byte_cost,
+            before_id: 0,
+            after_id: 0,
+        };
+        b.push_undo(entry(1, 10));
+        b.push_undo(entry(2, 9 * 1024 * 1024)); // over cap: evicts group 1 only
+        assert_eq!(b.undo.len(), 1);
+        b.push_undo(entry(2, 10)); // live group alone over cap: dropped whole
+        b.push_undo(entry(2, 10)); // and its later entries are not kept
+        assert!(b.undo.is_empty());
+        assert!(b.undo_dropped);
+        assert_eq!(b.undo_bytes, 0);
+        b.push_undo(entry(3, 10)); // next group is undoable again
+        assert_eq!(b.undo.len(), 1);
     }
 }

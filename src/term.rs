@@ -110,3 +110,60 @@ pub fn read_stdin(buf: &mut [u8]) -> io::Result<usize> {
         }
     }
 }
+
+/// Largest copy also sent to the system clipboard. Terminals and tmux cap
+/// OSC 52 payloads; past this only the internal register holds the copy.
+pub const OSC52_CAP: usize = 256 * 1024;
+
+/// OSC 52 write: hand the system clipboard `data` (base64, BEL-terminated).
+/// Write-only by design — paste comes from the register or bracketed paste.
+pub fn osc52(out: &mut impl Write, data: &[u8]) -> io::Result<()> {
+    let mut b64 = Vec::with_capacity(data.len().div_ceil(3) * 4 + 8);
+    b64.extend_from_slice(b"\x1b]52;c;");
+    base64(data, &mut b64);
+    b64.push(0x07);
+    out.write_all(&b64)
+}
+
+fn base64(data: &[u8], out: &mut Vec<u8>) {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    for c in data.chunks(3) {
+        let b = |i: usize| c.get(i).copied().unwrap_or(0) as u32;
+        let n = b(0) << 16 | b(1) << 8 | b(2);
+        out.push(T[(n >> 18) as usize & 63]);
+        out.push(T[(n >> 12) as usize & 63]);
+        out.push(if c.len() > 1 {
+            T[(n >> 6) as usize & 63]
+        } else {
+            b'='
+        });
+        out.push(if c.len() > 2 {
+            T[n as usize & 63]
+        } else {
+            b'='
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn base64_rfc4648_vectors() {
+        for (i, o) in [
+            ("", ""),
+            ("f", "Zg=="),
+            ("fo", "Zm8="),
+            ("foo", "Zm9v"),
+            ("foob", "Zm9vYg=="),
+            ("fooba", "Zm9vYmE="),
+            ("foobar", "Zm9vYmFy"),
+        ] {
+            let mut v = Vec::new();
+            super::base64(i.as_bytes(), &mut v);
+            assert_eq!(v, o.as_bytes());
+        }
+        let mut v = Vec::new();
+        super::osc52(&mut v, b"hi").unwrap();
+        assert_eq!(v, b"\x1b]52;c;aGk=\x07");
+    }
+}
